@@ -1,0 +1,31 @@
+-- Ejecutar una sola vez en Supabase > SQL Editor.
+create extension if not exists pgcrypto;
+create table if not exists public.admin_users (user_id uuid primary key references auth.users(id) on delete cascade);
+create table if not exists public.categories (id uuid primary key default gen_random_uuid(),name text not null check(length(name) between 1 and 80),position integer not null default 0);
+create table if not exists public.products (id uuid primary key default gen_random_uuid(),category_id uuid not null references public.categories(id),name text not null check(length(name) between 1 and 120),description text not null default '',price numeric(12,2) not null check(price>=0),image_url text,available boolean not null default true,position integer not null default 0);
+create table if not exists public.orders (id uuid primary key default gen_random_uuid(),created_at timestamptz not null default now(),customer_name text not null check(length(customer_name) between 1 and 100),delivery_type text not null check(delivery_type in ('Delivery','Retiro en local')),address text not null default '',notes text not null default '',items jsonb not null check(jsonb_typeof(items)='array'),total numeric(12,2) not null check(total>=0),status text not null default 'iniciado_whatsapp' check(status in ('iniciado_whatsapp','confirmado','preparando','entregado','cancelado')));
+create or replace function public.is_host_admin() returns boolean language sql stable security definer set search_path = '' as $$select exists(select 1 from public.admin_users where user_id = (select auth.uid()))$$;
+revoke all on function public.is_host_admin() from public;
+grant execute on function public.is_host_admin() to anon,authenticated;
+alter table public.admin_users enable row level security;
+alter table public.categories enable row level security;
+alter table public.products enable row level security;
+alter table public.orders enable row level security;
+create policy "admin self read" on public.admin_users for select to authenticated using (user_id=(select auth.uid()));
+create policy "public categories read" on public.categories for select to anon,authenticated using (true);
+create policy "admin categories insert" on public.categories for insert to authenticated with check (public.is_host_admin());
+create policy "admin categories update" on public.categories for update to authenticated using (public.is_host_admin()) with check (public.is_host_admin());
+create policy "admin categories delete" on public.categories for delete to authenticated using (public.is_host_admin());
+create policy "public products read" on public.products for select to anon,authenticated using (available=true or public.is_host_admin());
+create policy "admin products insert" on public.products for insert to authenticated with check (public.is_host_admin());
+create policy "admin products update" on public.products for update to authenticated using (public.is_host_admin()) with check (public.is_host_admin());
+create policy "admin products delete" on public.products for delete to authenticated using (public.is_host_admin());
+create policy "anonymous orders insert" on public.orders for insert to anon,authenticated with check (status='iniciado_whatsapp' and jsonb_array_length(items) between 1 and 50 and length(notes)<=500 and length(address)<=250);
+create policy "admin orders read" on public.orders for select to authenticated using (public.is_host_admin());
+create policy "admin orders update" on public.orders for update to authenticated using (public.is_host_admin()) with check (public.is_host_admin());
+insert into storage.buckets (id,name,public,file_size_limit,allowed_mime_types) values ('product-images','product-images',true,5242880,array['image/jpeg','image/png','image/webp']) on conflict(id) do nothing;
+create policy "public image access" on storage.objects for select to anon,authenticated using (bucket_id='product-images');
+create policy "admin upload images" on storage.objects for insert to authenticated with check (bucket_id='product-images' and public.is_host_admin());
+create policy "admin remove images" on storage.objects for delete to authenticated using (bucket_id='product-images' and public.is_host_admin());
+-- DESPUÉS de crear tu usuario en Authentication > Users, ejecutar con su UUID real:
+-- insert into public.admin_users(user_id) values ('UUID_DE_TU_USUARIO');
