@@ -14,7 +14,136 @@ async function reorder(arr,id,step,table){let i=arr.findIndex(x=>x.id===id),othe
 function renderProductGroups(productId){$('#product-groups').innerHTML=groups.map(g=>`<label style="display:block;padding:5px"><input type="checkbox" style="width:auto" name="group_${g.id}" value="${g.id}" ${links.some(l=>l.product_id===productId&&l.group_id===g.id)?'checked':''}> ${escapeHTML(g.name)} (${g.min_select} a ${g.max_select})</label>`).join('')||'<p class="muted">Primero creá grupos en la pestaña Opcionales.</p>'}
 function renderProducts(){$('#product-list').innerHTML=cats.map(c=>`<h3>${escapeHTML(c.name)}</h3>${products.filter(p=>p.category_id===c.id).map((p,i,arr)=>`<div class="item-row"><div class="row">${p.image_url?`<img src="${escapeHTML(p.image_url)}" alt="">`:'🍗'}<div><strong>${escapeHTML(p.name)}</strong><br>${money(p.price)} ${p.available?'':'· Oculto'}</div></div><div class="actions"><button class="secondary" data-p-up="${p.id}" ${i===0?'disabled':''}>↑</button><button class="secondary" data-p-down="${p.id}" ${i===arr.length-1?'disabled':''}>↓</button><button class="secondary" data-p-edit="${p.id}">Editar</button><button class="danger" data-p-del="${p.id}">Eliminar</button></div></div>`).join('')||'<p class="muted">Sin productos</p>'}`).join('');document.querySelectorAll('[data-p-up],[data-p-down]').forEach(b=>b.onclick=()=>{let id=b.dataset.pUp||b.dataset.pDown,p=products.find(x=>x.id===id);reorder(products.filter(x=>x.category_id===p.category_id),id,b.hasAttribute('data-p-up')?-1:1,'products')});document.querySelectorAll('[data-p-edit]').forEach(b=>b.onclick=()=>{const p=products.find(x=>x.id===b.dataset.pEdit),f=$('#product-form');for(const k of ['id','name','price','description','category_id'])f.elements[k].value=p[k]??'';f.elements.available.checked=p.available;renderProductGroups(p.id);f.scrollIntoView({behavior:'smooth'})});document.querySelectorAll('[data-p-del]').forEach(b=>b.onclick=()=>remove('products',b.dataset.pDel).catch(alertError))}
 $('#cancel-edit').onclick=()=>{$('#product-form').reset();renderProductGroups(null)};
-$('#product-form').onsubmit=async e=>{e.preventDefault();const form=e.target,f=new FormData(form),id=f.get('id')||uid(),existing=products.find(p=>p.id===id),category_id=f.get('category_id'),file=f.get('image');let image_url=existing?.image_url||null;const btn=form.querySelector('button[type=submit],button:not([type])');btn.disabled=true;try{if(file?.size){if(file.size>5e6||!['image/jpeg','image/png','image/webp'].includes(file.type))throw Error('Usá JPG, PNG o WebP de hasta 5 MB');const ext={'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[file.type],path=`${id}/${uid()}.${ext}`;const {error}=await db.storage.from('product-images').upload(path,file,{contentType:file.type});if(error)throw error;image_url=db.storage.from('product-images').getPublicUrl(path).data.publicUrl;}const position=existing?.category_id===category_id?existing.position:products.filter(p=>p.category_id===category_id).length;await save('products',{id,name:String(f.get('name')).trim(),description:String(f.get('description')||''),price:Number(f.get('price')),category_id,image_url,available:f.get('available')==='on',position});const selected=[...form.querySelectorAll('#product-groups input:checked')].map(x=>x.value);const {error:deleteError}=await db.from('product_option_groups').delete().eq('product_id',id);if(deleteError)throw deleteError;if(selected.length){const {error:linkError}=await db.from('product_option_groups').insert(selected.map((group_id,position)=>({product_id:id,group_id,position})));if(linkError)throw linkError;}await loadOptions();form.reset();renderProductGroups(null)}catch(err){alertError(err)}finally{btn.disabled=false}};
+
+$('#product-form').onsubmit = async e => {
+  e.preventDefault();
+
+  const form = e.target;
+  const f = new FormData(form);
+  const id = f.get('id') || uid();
+  const existing = products.find(p => p.id === id);
+  const category_id = f.get('category_id');
+  const file = f.get('image');
+
+  // Guardar la selección ANTES de actualizar la pantalla.
+  const selected = [
+    ...form.querySelectorAll('#product-groups input:checked')
+  ].map(x => x.value);
+
+  let image_url = existing?.image_url || null;
+
+  const btn = form.querySelector(
+    'button[type=submit],button:not([type])'
+  );
+  btn.disabled = true;
+
+  try {
+    if (file?.size) {
+      if (
+        file.size > 5e6 ||
+        !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)
+      ) {
+        throw Error('Usá JPG, PNG o WebP de hasta 5 MB');
+      }
+
+      const ext = {
+        'image/jpeg': 'jpg',
+        'image/png': 'png',
+        'image/webp': 'webp'
+      }[file.type];
+
+      const path = `${id}/${uid()}.${ext}`;
+
+      const { error } = await db.storage
+        .from('product-images')
+        .upload(path, file, { contentType: file.type });
+
+      if (error) throw error;
+
+      image_url = db.storage
+        .from('product-images')
+        .getPublicUrl(path).data.publicUrl;
+    }
+
+    const position =
+      existing?.category_id === category_id
+        ? existing.position
+        : products.filter(
+            p => p.category_id === category_id
+          ).length;
+
+    // Guardar el producto sin recargar todavía.
+    const { error: productError } = await db
+      .from('products')
+      .upsert({
+        id,
+        name: String(f.get('name')).trim(),
+        description: String(f.get('description') || ''),
+        price: Number(f.get('price')),
+        category_id,
+        image_url,
+        available: f.get('available') === 'on',
+        position
+      });
+
+    if (productError) throw productError;
+
+    // Comparar grupos anteriores y nuevos.
+    const current = links.filter(
+      l => l.product_id === id
+    );
+
+    const toAdd = selected.filter(
+      group_id => !current.some(
+        l => l.group_id === group_id
+      )
+    );
+
+    const toRemove = current.filter(
+      l => !selected.includes(l.group_id)
+    );
+
+    // Agregar primero los grupos nuevos.
+    if (toAdd.length) {
+      const { error } = await db
+        .from('product_option_groups')
+        .insert(
+          toAdd.map(group_id => ({
+            product_id: id,
+            group_id,
+            position: selected.indexOf(group_id)
+          }))
+        );
+
+      if (error) throw error;
+    }
+
+    // Quitar los grupos que se desmarcaron.
+    for (const relation of toRemove) {
+      const { error } = await db
+        .from('product_option_groups')
+        .delete()
+        .eq('product_id', id)
+        .eq('group_id', relation.group_id);
+
+      if (error) throw error;
+    }
+
+    // Actualizar solamente después de guardar.
+    await reload();
+
+    form.reset();
+    renderProductGroups(null);
+
+    alert('Producto y grupos guardados correctamente.');
+
+  } catch (err) {
+    alertError(err);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
 async function loadOrders(){const {data,error}=await db.from('orders').select('*').order('created_at',{ascending:false}).limit(200);if(error)throw error;orders=data;$('#order-list').innerHTML=orders.map(o=>`<div class="item-row"><div><strong>${escapeHTML(o.customer_name)}</strong> · ${money(o.total)}<br><small>${new Date(o.created_at).toLocaleString('es-AR')} · ${escapeHTML(o.delivery_type)} ${escapeHTML(o.address||'')}</small><br>${(o.items||[]).map(x=>`${Number(x.quantity)} × ${escapeHTML(x.name)}`).join(' · ')}<br><small>${escapeHTML(o.notes||'')}</small></div><select style="width:auto" data-status="${o.id}">${[['iniciado_whatsapp','WhatsApp iniciado'],['confirmado','Confirmado manualmente'],['preparando','Preparando'],['entregado','Entregado'],['cancelado','Cancelado']].map(([v,l])=>`<option value="${v}" ${o.status===v?'selected':''}>${l}</option>`).join('')}</select></div>`).join('')||'<p>No hay pedidos registrados.</p>';document.querySelectorAll('[data-status]').forEach(s=>s.onchange=async()=>{const {error}=await db.from('orders').update({status:s.value}).eq('id',s.dataset.status);if(error)alertError(error)})}
 $('#refresh-orders').onclick=()=>loadOrders().catch(alertError);
 
