@@ -82,6 +82,8 @@ function render() {
   renderCart();
 }
 
+// NUEVO SELECTOR DE OPCIONALES CON CANTIDADES
+
 function chooseOptions(id) {
   const p = products.find(x => x.id === id);
   if (!p) return;
@@ -96,6 +98,8 @@ function chooseOptions(id) {
     return;
   }
 
+  const quantities = new Map();
+
   const overlay = document.createElement('div');
   overlay.className = 'option-overlay';
 
@@ -103,44 +107,53 @@ function chooseOptions(id) {
     <div class="option-dialog" role="dialog" aria-modal="true">
       <div class="row">
         <h2 class="grow">${escapeHTML(p.name)}</h2>
-        <button type="button" class="secondary" id="close-options">✕</button>
+        <button type="button" class="secondary" id="close-options">
+          ✕
+        </button>
       </div>
 
       <p class="muted">Personalizá tu pedido</p>
 
       <form id="choose-form">
         ${gs.map(g => {
-          const min = Number(g.min_select);
           const max = Number(g.max_select);
+          const values = optionValues.filter(v => v.group_id === g.id);
 
           return `
             <fieldset data-option-group="${g.id}">
               <legend>
                 <strong>${escapeHTML(g.name)}</strong>
-                <small>
-                  ${min === max
-                    ? `Elegí ${min}`
-                    : `Elegí entre ${min} y ${max}`}
-                </small>
+                <small>Elegí ${max} unidades</small>
               </legend>
 
-              ${optionValues
-                .filter(v => v.group_id === g.id)
-                .map(v => `
-                  <label class="option-choice">
-                    <input
-                      style="width:auto"
-                      type="${max === 1 ? 'radio' : 'checkbox'}"
-                      name="group_${g.id}"
-                      value="${v.id}"
-                    >
-                    ${escapeHTML(v.name)}
-                    ${Number(v.extra_price)
-                      ? `(+${money(v.extra_price)})`
-                      : '(sin cargo)'}
-                  </label>
-                `).join('') ||
-                '<p>No hay opciones disponibles</p>'}
+              ${values.map(v => `
+                <div class="host-quantity-choice">
+                  <div class="host-choice-name">
+                    <strong>${escapeHTML(v.name)}</strong>
+                    <small>
+                      ${Number(v.extra_price)
+                        ? `(+${money(v.extra_price)} c/u)`
+                        : '(sin cargo)'}
+                    </small>
+                  </div>
+
+                  <div class="host-quantity-controls">
+                    <button
+                      type="button"
+                      class="secondary"
+                      data-option-minus="${v.id}"
+                    >−</button>
+
+                    <strong data-option-count="${v.id}">0</strong>
+
+                    <button
+                      type="button"
+                      class="secondary"
+                      data-option-plus="${v.id}"
+                    >+</button>
+                  </div>
+                </div>
+              `).join('') || '<p>No hay opciones disponibles</p>'}
 
               <p class="muted selection-status"></p>
             </fieldset>
@@ -157,49 +170,91 @@ function chooseOptions(id) {
   document.body.append(overlay);
 
   const form = overlay.querySelector('#choose-form');
-  const submitButton = overlay.querySelector('#confirm-options');
+  const confirmButton = overlay.querySelector('#confirm-options');
+
+  function groupTotal(g) {
+    return optionValues
+      .filter(v => v.group_id === g.id)
+      .reduce((sum, v) => sum + (quantities.get(v.id) || 0), 0);
+  }
 
   function updateSelections() {
     let valid = true;
 
     for (const g of gs) {
+      const max = Number(g.max_select);
+      const total = groupTotal(g);
+
       const fieldset = [...form.querySelectorAll('[data-option-group]')]
         .find(el => el.dataset.optionGroup === String(g.id));
 
       if (!fieldset) continue;
 
-      const min = Number(g.min_select);
-      const max = Number(g.max_select);
-      const inputs = [...fieldset.querySelectorAll('input')];
-      const checked = inputs.filter(input => input.checked);
-      const count = checked.length;
+      for (const v of optionValues.filter(v => v.group_id === g.id)) {
+        const quantity = quantities.get(v.id) || 0;
 
-      inputs.forEach(input => {
-        input.disabled = !input.checked && count >= max;
-      });
+        const count = [...fieldset.querySelectorAll('[data-option-count]')]
+          .find(el => el.dataset.optionCount === String(v.id));
+
+        const plus = [...fieldset.querySelectorAll('[data-option-plus]')]
+          .find(el => el.dataset.optionPlus === String(v.id));
+
+        const minus = [...fieldset.querySelectorAll('[data-option-minus]')]
+          .find(el => el.dataset.optionMinus === String(v.id));
+
+        if (count) count.textContent = quantity;
+        if (plus) plus.disabled = total >= max;
+        if (minus) minus.disabled = quantity <= 0;
+      }
 
       const status = fieldset.querySelector('.selection-status');
 
-      status.textContent =
-        `${count} de ${max} seleccionadas` +
-        (count < min ? ` · Elegí al menos ${min}` : '');
+      status.textContent = total === max
+        ? `✓ Cupo completo: ${total} de ${max}`
+        : `${total} de ${max} unidades · Faltan ${max - total}`;
 
-      if (count < min || count > max) valid = false;
+      if (total !== max) valid = false;
     }
 
-    submitButton.disabled = !valid;
+    confirmButton.disabled = !valid;
     return valid;
   }
 
-  form.addEventListener('change', e => {
-    if (e.target.matches('input[type="checkbox"], input[type="radio"]')) {
-      updateSelections();
+  form.addEventListener('click', e => {
+    const plus = e.target.closest('[data-option-plus]');
+    const minus = e.target.closest('[data-option-minus]');
+
+    if (!plus && !minus) return;
+
+    const button = plus || minus;
+    const optionId = plus
+      ? plus.dataset.optionPlus
+      : minus.dataset.optionMinus;
+
+    const value = optionValues.find(v => v.id === optionId);
+    if (!value) return;
+
+    const group = gs.find(g => g.id === value.group_id);
+    if (!group) return;
+
+    const current = quantities.get(optionId) || 0;
+
+    if (plus && groupTotal(group) < Number(group.max_select)) {
+      quantities.set(optionId, current + 1);
     }
+
+    if (minus && current > 0) {
+      quantities.set(optionId, current - 1);
+    }
+
+    updateSelections();
   });
 
   updateSelections();
 
-  overlay.querySelector('#close-options').onclick = () => overlay.remove();
+  overlay.querySelector('#close-options').onclick = () => {
+    overlay.remove();
+  };
 
   overlay.onclick = e => {
     if (e.target === overlay) overlay.remove();
@@ -209,35 +264,25 @@ function chooseOptions(id) {
     e.preventDefault();
 
     if (!updateSelections()) {
-      alert('Completá las opciones obligatorias.');
+      alert('Completá el cupo de todas las opciones.');
       return;
     }
 
     const selected = [];
 
     for (const g of gs) {
-      const picked = [...form.querySelectorAll(
-        `[name="group_${g.id}"]:checked`
-      )];
+      for (const v of optionValues.filter(v => v.group_id === g.id)) {
+        const quantity = quantities.get(v.id) || 0;
 
-      if (
-        picked.length < Number(g.min_select) ||
-        picked.length > Number(g.max_select)
-      ) {
-        alert(`En ${g.name} elegí entre ${g.min_select} y ${g.max_select} opciones`);
-        return;
-      }
-
-      for (const input of picked) {
-        const v = optionValues.find(o => o.id === input.value);
-        if (!v) return alert('No se encontró una opción seleccionada.');
-
-        selected.push({
-          id: v.id,
-          group: g.name,
-          name: v.name,
-          extra_price: Number(v.extra_price)
-        });
+        if (quantity > 0) {
+          selected.push({
+            id: v.id,
+            group: g.name,
+            name: v.name,
+            quantity,
+            extra_price: Number(v.extra_price)
+          });
+        }
       }
     }
 
@@ -246,8 +291,25 @@ function chooseOptions(id) {
   };
 }
 
+// CARRITO
+
+function optionQuantity(o) {
+  return Number(o.quantity || 1);
+}
+
+function optionTotal(selected) {
+  return selected.reduce(
+    (sum, o) => sum + Number(o.extra_price) * optionQuantity(o),
+    0
+  );
+}
+
 function addConfigured(p, selected) {
-  const key = p.id + '|' + selected.map(o => o.id).sort().join(',');
+  const key = p.id + '|' + selected
+    .map(o => `${o.id}:${optionQuantity(o)}`)
+    .sort()
+    .join(',');
+
   const existing = cart.get(key);
 
   cart.set(key, {
@@ -266,8 +328,7 @@ function renderCart() {
     const p = products.find(x => x.id === item.id);
     if (!p) return '';
 
-    const unit = Number(p.price) +
-      item.selected.reduce((s, x) => s + x.extra_price, 0);
+    const unit = Number(p.price) + optionTotal(item.selected);
 
     return `
       <div class="item-row">
@@ -275,7 +336,7 @@ function renderCart() {
           <strong>${escapeHTML(p.name)}</strong><br>
 
           ${item.selected.map(o =>
-            `${escapeHTML(o.group)}: ${escapeHTML(o.name)}`
+            `${optionQuantity(o)} × ${escapeHTML(o.group)}: ${escapeHTML(o.name)}`
           ).join('<br>')}
 
           ${item.selected.length ? '<br>' : ''}
@@ -294,10 +355,7 @@ function renderCart() {
 
   const total = entries.reduce((sum, [, item]) => {
     const p = products.find(x => x.id === item.id);
-
-    const unit = Number(p?.price || 0) +
-      item.selected.reduce((s, x) => s + x.extra_price, 0);
-
+    const unit = Number(p?.price || 0) + optionTotal(item.selected);
     return sum + item.quantity * unit;
   }, 0);
 
@@ -327,6 +385,8 @@ function renderCart() {
   });
 }
 
+// MÉTODOS DE PAGO Y ENTREGA
+
 $('#payment').onchange = () => {
   const cash = $('#payment').value === 'Efectivo';
   $('#cash-wrap').classList.toggle('hidden', !cash);
@@ -340,6 +400,8 @@ $('#delivery').onchange = () => {
   $('#address-wrap').classList.toggle('hidden', !delivery);
   $('#address').required = delivery;
 };
+
+// ENVÍO A WHATSAPP
 
 $('#checkout').onsubmit = async e => {
   e.preventDefault();
@@ -359,13 +421,10 @@ $('#checkout').onsubmit = async e => {
   const items = [...cart].map(([, item]) => {
     const p = products.find(x => x.id === item.id);
 
-    const price = Number(p.price) +
-      item.selected.reduce((n, x) => n + x.extra_price, 0);
-
     return {
       product_id: item.id,
       name: p.name,
-      price,
+      price: Number(p.price) + optionTotal(item.selected),
       quantity: item.quantity,
       options: item.selected
     };
@@ -407,9 +466,9 @@ $('#checkout').onsubmit = async e => {
       : '');
 
   const storedNotes = [paymentNotes, notes]
-    .filter(Boolean).join('\n');
+    .filter(Boolean)
+    .join('\n');
 
-  // Incluir todos los opcionales en WhatsApp.
   const orderLines = items.flatMap(item => {
     const lines = [
       `• ${item.quantity} × ${item.name} — ${money(item.quantity * item.price)}`
@@ -421,7 +480,6 @@ $('#checkout').onsubmit = async e => {
       if (!grouped.has(option.group)) {
         grouped.set(option.group, []);
       }
-
       grouped.get(option.group).push(option);
     }
 
@@ -430,9 +488,9 @@ $('#checkout').onsubmit = async e => {
 
       for (const option of options) {
         lines.push(
-          `  - ${option.name}` +
-          (option.extra_price
-            ? ` (+${money(option.extra_price)})`
+          `  - ${optionQuantity(option)} × ${option.name}` +
+          (Number(option.extra_price)
+            ? ` (+${money(Number(option.extra_price) * optionQuantity(option))})`
             : '')
         );
       }
