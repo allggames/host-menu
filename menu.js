@@ -956,7 +956,7 @@ if (rewards.wantsPoints && !customerPhone) {
       '🍗 *PEDIDO HOST*',
       `Código: ${orderId.slice(0, 8).toUpperCase()}`,
       `Cliente: ${name}`,
-      `Celular: ${customerPhone}`,
+...(customerPhone ? [`Celular: ${customerPhone}`] : []),
       `Entrega: ${delivery}`,
       `Pago: ${payment}`,
 
