@@ -1158,3 +1158,91 @@ body.menu-page {
     padding: 11px 16px;
   }
 }
+
+
+
+/* HOST - OPCIONALES POR CANTIDAD */
+
+.host-quantity-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 4px;
+  border-bottom: 1px solid #ececec;
+}
+
+.host-quantity-choice:last-of-type {
+  border-bottom: 0;
+}
+
+.host-choice-name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.host-choice-name strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.host-choice-name small {
+  font-size: 12px;
+  color: #777;
+}
+
+.host-quantity-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.host-quantity-controls button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 9px;
+  background: #ededed;
+  color: #222;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.host-quantity-controls button:not(:disabled):hover {
+  background: #ed171f;
+  color: white;
+}
+
+.host-quantity-controls button:disabled {
+  opacity: .3;
+}
+
+.host-quantity-controls strong {
+  min-width: 18px;
+  text-align: center;
+  font-size: 16px;
+}
+
+.option-dialog .selection-status {
+  margin-top: 12px;
+  font-weight: 700;
+}
+
+@media (max-width: 420px) {
+  .host-choice-name strong {
+    font-size: 12px;
+  }
+
+  .host-quantity-controls {
+    gap: 6px;
+  }
+
+  .host-quantity-controls button {
+    width: 30px;
+    height: 30px;
+  }
+}
