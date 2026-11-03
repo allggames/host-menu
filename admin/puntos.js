@@ -1,421 +1,169 @@
+import { db, escapeHTML } from '../shared.js';
 
-import { db, escapeHTML, alertError } from '../shared.js';
+const panelHost = document.querySelector('#dashboard');
+const tabs = panelHost?.querySelector('.tabs');
+const h = v => escapeHTML(String(v ?? ''));
+const $ = id => document.getElementById(id);
+let clients = [], purchases = [], adjustments = [], selectedId = null;
+const fmt = n => Number(n||0).toLocaleString('es-AR');
+const date = v => v ? new Date(v).toLocaleDateString('es-AR') : '-';
 
-// HOST: pestaña privada de clientes y puntos.
-// Reutiliza los permisos del administrador existente.
-
-const dashboard = document.querySelector('#dashboard');
-const tabs = dashboard?.querySelector('.tabs');
-
-if (dashboard && tabs && !document.querySelector('#points-panel')) {
+if (panelHost && tabs && !$('points-panel')) {
   const tab = document.createElement('button');
-  tab.type = 'button';
-  tab.dataset.tab = 'points';
-  tab.textContent = '⭐ Clientes y puntos';
+  tab.dataset.tab='points'; tab.type='button'; tab.textContent='⭐ Clientes y puntos';
   tabs.append(tab);
-
-  const panel = document.createElement('div');
-  panel.id = 'points-panel';
-  panel.className = 'panel hidden';
-
-  panel.innerHTML = `
-    <h2>⭐ Clientes y puntos</h2>
-
-    <p class="muted">
-      Los puntos se acreditan al confirmar el pedido
-      y se revierten si se cancela.
-    </p>
-
-    <div class="host-stats" id="host-stats"></div>
-
-    <div class="row" style="
-      margin:18px 0;
-      align-items:center;
-      gap:10px;
-      flex-wrap:wrap
-    ">
-      <input
-        id="host-client-search"
-        class="grow"
-        type="search"
-        placeholder="Buscar por nombre o celular"
-        aria-label="Buscar cliente"
-      >
-
-      <button
-        class="secondary"
-        type="button"
-        id="host-reload-points"
-      >
-        Actualizar
-      </button>
+  const panel=document.createElement('div');
+  panel.className='panel hidden';panel.id='points-panel';
+  panel.innerHTML=`<h2>⭐ Clientes y puntos</h2>
+    <p class="muted">Buscá clientes, consultá o cambiá sus códigos y registrá ajustes de puntos.</p>
+    <div id="host-points-summary" style="margin:12px 0;font-weight:bold"></div>
+    <div class="row" style="gap:10px;margin:16px 0;flex-wrap:wrap">
+      <input id="host-search" class="grow" type="search" placeholder="Nombre o celular">
+      <button type="button" class="secondary" id="host-refresh">Actualizar</button>
     </div>
-
-    <p
-      id="host-points-admin-error"
-      class="error"
-      role="status"
-    ></p>
-
-    <div id="host-client-list"></div>
-    <div id="host-client-detail"></div>
+    <p id="host-admin-feedback" role="status"></p>
+    <div id="host-customers-list"></div>
+    <div id="host-customer-detail"></div>`;
+  panelHost.append(panel);
+  const style=document.createElement('style');
+  style.textContent=`
+    #host-customers-list .host-client{display:flex;align-items:center;justify-content:space-between;
+      flex-wrap:wrap;gap:10px;border-bottom:1px solid #666;padding:12px 0}
+    #host-customer-detail{margin-top:18px}
+    #host-customer-detail .host-client-info{border:1px solid #777;border-radius:10px;padding:18px}
+    #host-customer-detail .host-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+    #host-customer-detail .host-history{display:flex;gap:12px;justify-content:space-between;
+      padding:10px 0;border-bottom:1px solid #555}
+    #host-admin-feedback{color:#d99800;min-height:18px}
   `;
-
-  dashboard.append(panel);
-
-  // ESTILOS
-
-  const style = document.createElement('style');
-
-  style.textContent = `
-    .host-stats {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0,1fr));
-      gap: 10px;
-      margin-top: 15px;
-    }
-
-    .host-stat {
-      border: 1px solid #454040;
-      border-radius: 12px;
-      padding: 14px;
-      background: rgba(255,180,0,.07);
-    }
-
-    .host-stat strong {
-      display: block;
-      color: #ffbd29;
-      font-size: clamp(20px,3vw,29px);
-    }
-
-    .host-stat small {
-      color: #bcbcbc;
-    }
-
-    .host-client-row {
-      padding: 13px 0;
-      border-bottom: 1px solid #444;
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-    }
-
-    .host-client-row small {
-      display: block;
-      opacity: .75;
-      margin-top: 3px;
-    }
-
-    .host-points-balance {
-      font-weight: 800;
-      color: #ffbd29;
-    }
-
-    .host-point-detail {
-      margin-top: 20px;
-      border: 1px solid #555;
-      border-radius: 12px;
-      padding: 16px;
-    }
-
-    .host-point-movement {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 10px 0;
-      border-bottom: 1px solid #444;
-      flex-wrap: wrap;
-    }
-
-    @media(max-width:520px) {
-      .host-stats {
-        grid-template-columns: 1fr 1fr;
-      }
-
-      .host-stats .host-stat:last-child {
-        grid-column: span 2;
-      }
-    }
-  `;
-
   document.head.append(style);
+  const message = x => { $('host-admin-feedback').textContent = String(x||''); };
 
-  let customers = [];
-  let points = [];
-  let selectedCustomer = null;
-
-  const $ = id => document.getElementById(id);
-
-  const clean = value =>
-    escapeHTML(String(value ?? ''));
-
-  const number = n =>
-    Number(n || 0).toLocaleString('es-AR');
-
-  const date = value =>
-    value
-      ? new Date(value).toLocaleDateString('es-AR')
-      : '-';
-
-  // CARGAR TODOS LOS REGISTROS
-
-  async function fetchAll(table, columns, dateColumn) {
-    const result = [];
-
-    for (let from = 0; ; from += 500) {
-      const { data, error } = await db
-        .from(table)
-        .select(columns)
-        .order(dateColumn, { ascending: false })
-        .range(from, from + 499);
-
-      if (error) throw error;
-
-      result.push(...(data || []));
-
-      if (!data || data.length < 500) break;
-    }
-
-    return result;
+  async function authorize() {
+    const { data:{user}, error } = await db.auth.getUser();
+    if(error || !user) throw Error('Ingresá al administrador primero.');
+    const result=await db.from('admin_users').select('user_id').eq('user_id',user.id).maybeSingle();
+    if(result.error || !result.data) throw Error('Tu cuenta no tiene permiso de administrador.');
   }
-
-  // CALCULAR PUNTOS POR CLIENTE
-
-  function totalFor(id) {
-    const entries = points.filter(
-      p => p.customer_id === id
-    );
-
-    return {
-      points: entries.reduce(
-        (sum, p) => sum + Number(p.points || 0),
-        0
-      ),
-      orders: entries.length
-    };
-  }
-
-  // MOSTRAR CLIENTES
-
+  const call = async (method, params) => {
+    const {data,error} = await db.rpc(method,params);
+    if(error) throw error;
+    if(data?.error) throw Error(data.error);
+    return data;
+  };
+  const pointTotal = id => purchases.filter(x=>x.customer_id===id).reduce((s,x)=>s+Number(x.points),0)
+    +adjustments.filter(x=>x.customer_id===id).reduce((s,x)=>s+Number(x.delta),0);
   function render() {
-    const sum = points.reduce(
-      (n, p) => n + Number(p.points || 0),
-      0
-    );
-
-    $('host-stats').innerHTML = [
-      [customers.length, 'Clientes registrados'],
-      [sum, 'Puntos entregados'],
-      [points.length, 'Compras acreditadas']
-    ].map(([value, label]) => `
-      <div class="host-stat">
-        <strong>${number(value)}</strong>
-        <small>${label}</small>
-      </div>
-    `).join('');
-
-    const q = $('host-client-search')
-      .value.trim()
-      .toLocaleLowerCase('es-AR');
-
-    const found = customers.filter(c =>
-      String(c.name || '')
-        .toLocaleLowerCase('es-AR')
-        .includes(q) ||
-      String(c.phone || '')
-        .includes(q.replace(/\s/g, ''))
-    );
-
-    $('host-client-list').innerHTML = found.length
-      ? found.map(c => {
-          const balance = totalFor(c.id);
-
-          return `
-            <div class="host-client-row">
-              <div>
-                <strong>${clean(c.name)}</strong>
-                <small>${clean(c.phone)}</small>
-              </div>
-
-              <div class="actions">
-                <span class="host-points-balance">
-                  ${number(balance.points)} pts
-                </span>
-
-                <button
-                  type="button"
-                  class="secondary"
-                  data-host-client="${clean(c.id)}"
-                >
-                  Ver compras (${balance.orders})
-                </button>
-              </div>
-            </div>
-          `;
-        }).join('')
-      : '<p class="muted">No se encontraron clientes.</p>';
-
-    $('host-client-list')
-      .querySelectorAll('[data-host-client]')
-      .forEach(button => {
-        button.onclick = () => {
-          selectedCustomer = button.dataset.hostClient;
-          renderDetail();
-        };
-      });
-
+    $('host-points-summary').textContent = `${clients.length} clientes · ${fmt(clients.reduce((s,c)=>s+pointTotal(c.id),0))} puntos`;
+    const q=$('host-search').value.trim().toLowerCase();
+    const found=clients.filter(c=>(c.name+' '+c.phone).toLowerCase().includes(q));
+    $('host-customers-list').innerHTML=found.map(c=>`
+      <div class="host-client"><div><strong>${h(c.name)}</strong><br><small>${h(c.phone)} ${!c.access_code_encrypted?'· Sin registro':c.access_approved?'· Cuenta activa':'· Pendiente de aprobación'}</small></div>
+      <div class="actions"><strong>${fmt(pointTotal(c.id))} pts</strong>
+      <button type="button" class="secondary" data-client="${h(c.id)}">Administrar</button></div></div>
+    `).join('')||'<p class="muted">No se encontraron clientes.</p>';
+    $('host-customers-list').querySelectorAll('[data-client]').forEach(b=>{
+      b.onclick=()=>{selectedId=b.dataset.client;renderDetail();};
+    });
     renderDetail();
   }
-
-  // DETALLE DEL CLIENTE
-
   function renderDetail() {
-    const target = $('host-client-detail');
-
-    const customer = customers.find(
-      c => c.id === selectedCustomer
-    );
-
-    if (!customer) {
-      target.innerHTML = '';
-      return;
-    }
-
-    const movements = points.filter(
-      p => p.customer_id === customer.id
-    );
-
-    const balance = totalFor(customer.id);
-
-    target.innerHTML = `
-      <div class="host-point-detail">
-
-        <div class="row" style="
-          justify-content:space-between;
-          gap:10px
-        ">
-          <div>
-            <h3>${clean(customer.name)}</h3>
-            <p class="muted">${clean(customer.phone)}</p>
-          </div>
-
-          <button
-            type="button"
-            class="secondary"
-            id="host-close-client"
-          >
-            Cerrar
-          </button>
-        </div>
-
-        <p>
-          <strong>${number(balance.points)} puntos</strong>
-          acumulados en ${balance.orders} compras.
-        </p>
-
-        <h3>Historial de puntos</h3>
-
-        ${
-          movements.length
-            ? movements.map(m => `
-                <div class="host-point-movement">
-                  <span>
-                    Pedido #${clean(
-                      String(m.order_id)
-                        .slice(0, 8)
-                        .toUpperCase()
-                    )}
-                    · ${date(m.credited_at)}
-                  </span>
-
-                  <strong>
-                    +${number(m.points)} pts
-                  </strong>
-                </div>
-              `).join('')
-            : `
-              <p class="muted">
-                Todavía no hay compras confirmadas.
-              </p>
-            `
-        }
-
+    const c=clients.find(x=>x.id===selectedId);
+    const target=$('host-customer-detail');
+    if(!c) {target.innerHTML='';return;}
+    const history=[
+      ...purchases.filter(x=>x.customer_id===c.id).map(x=>({created_at:x.credited_at,reason:'Compra confirmada',delta:x.points})),
+      ...adjustments.filter(x=>x.customer_id===c.id).map(x=>({created_at:x.created_at,reason:x.reason,delta:x.delta}))
+    ].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+    target.innerHTML=`<div class="host-client-info">
+      <div class="row"><div class="grow"><h3>${h(c.name)}</h3><p>${h(c.phone)}</p>
+      <h3>${fmt(pointTotal(c.id))} puntos</h3></div>
+      <button type="button" id="host-close-detail" class="secondary">Cerrar</button></div>
+      <div class="host-actions">
+        ${!c.access_approved && c.access_code_encrypted ? '<button type="button" id="host-approve">✅ Aprobar registro</button>' : ''}
+        <button type="button" id="host-see-code" class="secondary">👁 Ver código</button>
+        <button type="button" id="host-reset-code" class="secondary">🔑 Cambiar código</button>
+        <button type="button" id="host-adjust-points">+ / − Puntos</button>
+        <a id="host-contact-client" class="button yellow" target="_blank" rel="noopener"
+          href="https://wa.me/${encodeURIComponent(c.phone.replace(/\D/g,''))}">WhatsApp</a>
       </div>
-    `;
-
-    $('host-close-client').onclick = () => {
-      selectedCustomer = null;
-      renderDetail();
+      <p id="host-private-code" style="font-weight:bold"></p>
+      <h3>Historial</h3>
+      ${history.map(x=>`<div class="host-history"><span>${h(x.reason)} · ${date(x.created_at)}</span>
+        <strong>${Number(x.delta)>0?'+':''}${fmt(x.delta)} pts</strong></div>`).join('')||'<p class="muted">Sin movimientos.</p>'}
+      </div>`;
+    $('host-close-detail').onclick=()=>{selectedId=null;renderDetail();};
+    if ($('host-approve')) $('host-approve').onclick=async()=>{
+      if(!confirm('Antes de aprobar, verificá por WhatsApp que el número realmente pertenece a '+c.name+'. ¿Confirmás?'))return;
+      try {await call('host_rewards_admin_approve',{p_customer_id:c.id});await reload();message('Cuenta aprobada.');}
+      catch(e){message(e.message);}
+    };
+    $('host-see-code').onclick=async()=>{
+      if(!confirm('¿Querés consultar el código privado de este cliente? La consulta queda registrada.')) return;
+      try {
+        const code=await call('host_rewards_admin_view_code',{p_customer_id:c.id});
+        $('host-private-code').textContent=code===null?'El cliente todavía no creó su código.':`Código actual: ${code}`;
+      }catch(e){message(e.message);}
+    };
+    $('host-reset-code').onclick=async()=>{
+      // Código generado por el admin si el cliente olvidó el suyo.
+      const a=new Uint32Array(1);crypto.getRandomValues(a);
+      const suggested=String(a[0]%100000000).padStart(8,'0');
+      const code=prompt('Nuevo código de 8 dígitos para '+c.name,suggested);
+      if(code===null) return;
+      if(!/^\d{8}$/.test(code)) return alert('Ingresá exactamente 8 dígitos.');
+      if(!confirm('El código anterior dejará de funcionar. ¿Confirmás?')) return;
+      try {
+        await call('host_rewards_admin_reset_code',{p_customer_id:c.id,p_new_code:code});
+        $('host-private-code').textContent=`Nuevo código: ${code} (enviáselo al cliente en privado)`;
+        message('Código cambiado. La persona podrá cambiarlo desde su cuenta.');
+      }catch(e){message(e.message);}
+    };
+    $('host-adjust-points').onclick=async()=>{
+      const raw=prompt('¿Cuántos puntos querés sumar o descontar? Ej.: 10 o -5');
+      if(raw===null) return;
+      const delta=Number(raw);
+      if(!Number.isInteger(delta)||delta===0||Math.abs(delta)>10000) return alert('Cantidad inválida.');
+      const reason=prompt('Motivo del ajuste (queda registrado en el historial):');
+      if(reason===null) return;
+      if(reason.trim().length<5) return alert('Explicá el motivo (mínimo 5 caracteres).');
+      if(!confirm(`¿Confirmás ${delta>0?'+':''}${delta} puntos para ${c.name}?`)) return;
+      try {
+        await call('host_rewards_admin_adjust',{p_customer_id:c.id,p_delta:delta,p_reason:reason.trim()});
+        await reload();message('Puntos actualizados y movimiento guardado.');
+      }catch(e){message(e.message);}
     };
   }
-
-  // ACTUALIZAR DATOS DESDE SUPABASE
-
-  async function reload() {
-    $('host-points-admin-error').textContent =
-      'Cargando clientes y puntos...';
-
-    try {
-      [customers, points] = await Promise.all([
-        fetchAll(
-          'host_customers',
-          'id,name,phone,created_at',
-          'created_at'
-        ),
-        fetchAll(
-          'host_points',
-          'order_id,customer_id,points,credited_at',
-          'credited_at'
-        )
-      ]);
-
-      $('host-points-admin-error').textContent = '';
-
-      render();
-
-    } catch (error) {
-      $('host-points-admin-error').textContent =
-        error.message || String(error);
-
-      alertError(error);
+  async function fetchAll(table,cols,dateColumn){
+    let out=[];
+    for(let i=0;;i+=500){
+      const {data,error}=await db.from(table).select(cols).order(dateColumn,{ascending:false}).range(i,i+499);
+      if(error)throw error;
+      out.push(...(data||[]));
+      if(!data||data.length<500)break;
     }
+    return out;
   }
-
-  // CAMBIAR ENTRE PESTAÑAS
-
-  tabs.querySelectorAll('[data-tab]')
-    .forEach(button => {
-      if (button === tab) return;
-
-      button.addEventListener('click', () => {
-        panel.classList.add('hidden');
-      });
-    });
-
-  tab.onclick = async () => {
-    tabs.querySelectorAll('[data-tab]')
-      .forEach(b => {
-        b.classList.toggle('active', b === tab);
-      });
-
-    for (const id of [
-      'categories',
-      'products',
-      'options',
-      'orders'
-    ]) {
-      document.getElementById(`${id}-panel`)
-        ?.classList.add('hidden');
-    }
-
-    panel.classList.remove('hidden');
-
-    await reload();
+  async function reload(){
+    message('Cargando...');
+    try{
+      await authorize();
+      [clients,purchases,adjustments]=await Promise.all([
+        fetchAll('host_customers','id,name,phone,created_at,access_approved,access_code_encrypted','created_at'),
+        fetchAll('host_points','order_id,customer_id,points,credited_at','credited_at'),
+        fetchAll('host_point_adjustments','id,customer_id,delta,reason,created_at','created_at')
+      ]);
+      render();message('');
+    }catch(e){message('Error: '+e.message);}
+  }
+  tabs.querySelectorAll('[data-tab]').forEach(b=>{
+    if(b!==tab)b.addEventListener('click',()=>panel.classList.add('hidden'));
+  });
+  tab.onclick=()=>{
+    tabs.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b===tab));
+    for(const x of ['categories','products','options','orders']) $(x+'-panel')?.classList.add('hidden');
+    panel.classList.remove('hidden');reload();
   };
-
-  $('host-client-search').oninput = render;
-  $('host-reload-points').onclick = reload;
+  $('host-search').oninput=render;
+  $('host-refresh').onclick=reload;
 }
-
