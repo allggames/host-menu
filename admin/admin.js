@@ -314,6 +314,7 @@ function renderProducts() {
                 <br>
                 ${money(p.price)}
                 ${p.available ? '' : '· Oculto'}
+                ${p.featured ? ' · ⭐ Destacado' : ''}
               </div>
             </div>
 
@@ -372,6 +373,7 @@ function renderProducts() {
       }
 
       f.elements.available.checked = p.available;
+      f.elements.featured.checked = Boolean(p.featured);
 
       renderProductGroups(p.id);
 
@@ -400,7 +402,7 @@ function clearProductForm() {
 
 $('#cancel-edit').onclick = clearProductForm;
 
-// GUARDAR PRODUCTO - CORREGIDO
+// GUARDAR PRODUCTO
 
 $('#product-form').onsubmit = async e => {
   e.preventDefault();
@@ -505,6 +507,7 @@ $('#product-form').onsubmit = async e => {
       category_id,
       image_url,
       available: f.get('available') === 'on',
+      featured: f.get('featured') === 'on',
       position
     };
 
