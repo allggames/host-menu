@@ -794,9 +794,18 @@ $('#checkout').onsubmit = async event => {
       throw new Error('Ingresá tu nombre.');
     }
 
-    const customerPhone = normalizeHostPhone(
-      form.get('customer_phone')
-    );
+const rewards = getHostLoyaltyOrder();
+
+const customerPhone = rewards.phone;
+
+if (rewards.wantsPoints && !customerPhone) {
+  button.disabled = false;
+
+  return alert(
+    'Para sumar puntos, ingresá a tu cuenta de HOST PUNTOS.'
+  );
+}
+
 
     if (!customerPhone) {
       throw new Error(
