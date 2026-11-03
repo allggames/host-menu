@@ -3,6 +3,7 @@ import { db, money, escapeHTML, uid, alertError } from './shared.js';
 import { configured, WHATSAPP_NUMBER } from './config.js';
 import { normalizeHostPhone } from './loyalty.js';
 
+
 const $ = selector => document.querySelector(selector);
 const h = value => escapeHTML(String(value ?? ''));
 
