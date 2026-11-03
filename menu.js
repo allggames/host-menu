@@ -3,6 +3,8 @@ import { db, money, escapeHTML, uid, alertError } from './shared.js';
 import { configured, WHATSAPP_NUMBER } from './config.js';
 import { normalizeHostPhone } from './loyalty.js';
 import { getHostLoyaltyOrder } from './host-points-prompt.js';
+import { setHostCanjeSubtotal, getHostCanje, getHostCanjeCredentials, registerHostRedeemedOrder } from './host-canjes.js';
+
 
 const $ = selector => document.querySelector(selector);
 const h = value => escapeHTML(String(value ?? ''));
@@ -689,6 +691,7 @@ function renderCart() {
   }, 0);
 
   $('#total').textContent = money(total);
+  setHostCanjeSubtotal(total);
 
   // Quitar unidades.
 
@@ -754,314 +757,165 @@ $('#delivery').onchange = () => {
 };
 
 
- // FINALIZAR PEDIDO POR WHATSAPP - CORREGIDO
-
+// FINALIZAR PEDIDO POR WHATSAPP Y CANJES HOST
 $('#checkout').onsubmit = async event => {
   event.preventDefault();
+  if (!configured) return alert('Falta configurar Supabase.');
+  if (!cart.size) return alert('Agregá un producto al carrito.');
+  if (!/^\d{10,15}$/.test(WHATSAPP_NUMBER)) {
+    return alert('El WhatsApp de HOST no está configurado.');
+  }
 
   const button = $('#send');
   const status = $('#checkout-status');
-
-  if (!configured) {
-    alert('Falta configurar Supabase');
-    return;
-  }
-
-  if (!cart.size) {
-    alert('Agregá al menos un producto');
-    return;
-  }
-
-  if (!/^\d{10,15}$/.test(WHATSAPP_NUMBER)) {
-    alert('HOST todavía no configuró su número de WhatsApp');
-    return;
-  }
-
   button.disabled = true;
   button.textContent = 'PREPARANDO PEDIDO...';
   status.textContent = '';
-
   let popup = null;
 
   try {
     const form = new FormData(event.target);
-
-    // DATOS DEL CLIENTE
-
     const name = String(form.get('name') || '').trim();
-
-    if (!name) {
-      throw new Error('Ingresá tu nombre.');
-    }
-
-const rewards = getHostLoyaltyOrder();
-
-const customerPhone = rewards.phone;
-
-if (rewards.wantsPoints && !customerPhone) {
-  button.disabled = false;
-
-  return alert(
-    'Para sumar puntos, ingresá a tu cuenta de HOST PUNTOS.'
-  );
-}
-
-
-    if (!customerPhone) {
-      throw new Error(
-        'Ingresá un celular válido. Ejemplo: 3764123456'
-      );
-    }
-
     const delivery = String(form.get('delivery') || '');
-
-    const address = String(
-      form.get('address') || ''
-    ).trim();
-
-    if (delivery === 'Delivery' && !address) {
-      throw new Error('Ingresá la dirección de entrega.');
+    const address = String(form.get('address') || '').trim();
+    const notes = String(form.get('notes') || '').trim();
+    const payment = String(form.get('payment') || '');
+    const cashRaw = String(form.get('cash_amount') ?? '').trim();
+    const cashAmount = payment === 'Efectivo' && cashRaw !== ''
+      ? Number(cashRaw) : null;
+    if (!name) throw Error('Ingresá tu nombre.');
+    if (delivery === 'Delivery' && !address) throw Error('Ingresá la dirección de entrega.');
+    if (!['Delivery', 'Retiro en local'].includes(delivery)) throw Error('Elegí una entrega válida.');
+    if (!['Efectivo','Transferencia / Mercado Pago'].includes(payment)) throw Error('Seleccioná una forma de pago.');
+    if (cashAmount !== null && (!Number.isFinite(cashAmount) || cashAmount < 0)) {
+      throw Error('El importe de efectivo es inválido.');
     }
 
-    const notes = String(
-      form.get('notes') || ''
-    ).trim();
+    const reward = getHostCanje();
+    const credential = getHostCanjeCredentials();
+    const loyalty = getHostLoyaltyOrder();
+    const customerPhone = reward
+      ? credential?.phone
+      : loyalty.wantsPoints ? loyalty.phone : null;
 
-    const payment = String(
-      form.get('payment') || ''
-    );
-
-    if (![
-      'Efectivo',
-      'Transferencia / Mercado Pago'
-    ].includes(payment)) {
-      throw new Error('Seleccioná una forma de pago.');
+    if (loyalty.wantsPoints && !customerPhone && !reward) {
+      throw Error('Iniciá sesión en HOST PUNTOS o continuá sin puntos.');
     }
-
-    // PRODUCTOS Y OPCIONALES
+    if (reward && (!credential?.phone || !credential?.code)) {
+      throw Error('Iniciá sesión en HOST PUNTOS para usar tus puntos.');
+    }
 
     const items = [...cart.values()].map(item => {
-      const product = products.find(
-        p => p.id === item.id
-      );
-
-      if (!product) {
-        throw new Error(
-          'No encontramos uno de los productos del carrito.'
-        );
-      }
-
-      const unitPrice =
-        Number(product.price) +
-        optionTotal(item.selected);
-
+      const product = products.find(p => p.id === item.id);
+      if (!product) throw Error('Un producto del carrito dejó de estar disponible.');
       return {
-        product_id: item.id,
-        name: product.name,
-        price: unitPrice,
-        quantity: item.quantity,
-        options: item.selected
+        product_id: item.id, name: product.name,
+        price: Number(product.price) + optionTotal(item.selected),
+        quantity: item.quantity, options: item.selected
       };
     });
+    const subtotal = items.reduce((s, x) => s + Number(x.price)*Number(x.quantity), 0);
+    let total = subtotal;
+    let discount = 0;
+    let selectedRewardName = '';
+    let orderItems = items;
+    let orderId = uid();
 
-    const total = items.reduce(
-      (sum, item) => sum + item.price * item.quantity,
-      0
-    );
+    // Abrir la pestaña antes de esperar a Supabase, para evitar bloqueadores.
+    popup = window.open('about:blank','_blank');
+    button.textContent = 'REGISTRANDO PEDIDO...';
+    status.textContent = 'Guardando tu pedido...';
 
-    // EFECTIVO: EL CAMPO ES OPCIONAL
-
-    const cashText = String(
-      form.get('cash_amount') ?? ''
-    ).trim();
-
-    let cashAmount = null;
-
-    if (payment === 'Efectivo' && cashText !== '') {
-      cashAmount = Number(cashText);
-
-      if (
-        !Number.isFinite(cashAmount) ||
-        cashAmount < total
-      ) {
-        throw new Error(
-          'El monto en efectivo debe alcanzar el total.'
-        );
+    if (reward) {
+      // El servidor comprueba el código, el saldo, los precios y reserva los puntos.
+      const result = await registerHostRedeemedOrder({
+        reward,
+        phone: credential.phone,
+        code: credential.code,
+        name, delivery, address, notes, payment, cashAmount, items
+      });
+      orderId = result.order_id;
+      total = Number(result.total);
+      discount = Number(result.discount || 0);
+      selectedRewardName = result.reward_name;
+      orderItems = result.items;
+    } else {
+      if (cashAmount !== null && cashAmount < total) {
+        throw Error('El efectivo no alcanza el total del pedido.');
       }
+      const paymentNotes = `Forma de pago: ${payment}` +
+        (cashAmount !== null
+          ? ` | Abona con: ${money(cashAmount)} | Vuelto: ${money(cashAmount-total)}`
+          : '');
+      const storedNotes = [paymentNotes, notes].filter(Boolean).join('\n');
+      const { error } = await db.from('orders').insert({
+        id:orderId, customer_name:name, customer_phone:customerPhone,
+        delivery_type:delivery,address,notes:storedNotes,
+        items:orderItems,total,status:'iniciado_whatsapp'
+      });
+      if (error) throw error;
     }
 
-    // DATOS DEL PEDIDO
-
-    const orderId = uid();
-
-    const paymentNotes =
-      `Forma de pago: ${payment}` +
-      (
-        cashAmount !== null
-          ? ` | Abona con: ${money(cashAmount)}` +
-            ` | Vuelto: ${money(cashAmount - total)}`
-          : ''
-      );
-
-    const storedNotes = [
-      paymentNotes,
-      notes
-    ].filter(Boolean).join('\n');
-
-    // DETALLE DE PRODUCTOS
-
-    const orderLines = items.flatMap(item => {
+    const orderLines = orderItems.flatMap(item => {
       const lines = [
-        `• ${item.quantity} × ${item.name} — ` +
-        money(item.quantity * item.price)
+        `• ${item.quantity} × ${item.name}` +
+        (item.is_reward ? ' — GRATIS (CANJE)' : ` — ${money(item.quantity*item.price)}`)
       ];
-
       const grouped = new Map();
-
       for (const option of item.options || []) {
-        if (!grouped.has(option.group)) {
-          grouped.set(option.group, []);
-        }
-
+        if (!grouped.has(option.group)) grouped.set(option.group,[]);
         grouped.get(option.group).push(option);
       }
-
-      for (const [group, options] of grouped) {
+      for (const [group,options] of grouped) {
         lines.push(`  *${group}:*`);
-
         for (const option of options) {
-          const quantity = optionQuantity(option);
-
-          lines.push(
-            `  - ${quantity} × ${option.name}` +
-            (
-              Number(option.extra_price)
-                ? ` (+${money(
-                    Number(option.extra_price) * quantity
-                  )})`
-                : ''
-            )
-          );
+          const q = optionQuantity(option);
+          lines.push(`  - ${q} × ${option.name}`);
         }
       }
-
       lines.push('');
-
       return lines;
     });
 
-    // MENSAJE PARA WHATSAPP
-
     const message = [
       '🍗 *PEDIDO HOST*',
-      `Código: ${orderId.slice(0, 8).toUpperCase()}`,
+      `Código: ${String(orderId).slice(0,8).toUpperCase()}`,
       `Cliente: ${name}`,
-...(customerPhone ? [`Celular: ${customerPhone}`] : []),
+      ...(customerPhone ? [`Celular: ${customerPhone}`] : []),
       `Entrega: ${delivery}`,
       `Pago: ${payment}`,
-
-      ...(
-        cashAmount !== null
-          ? [
-              `Abona con: ${money(cashAmount)}`,
-              `Vuelto: ${money(cashAmount - total)}`
-            ]
-          : []
-      ),
-
       ...(address ? [`Dirección: ${address}`] : []),
-
-      '',
-      '*DETALLE DEL PEDIDO*',
-      '',
-      ...orderLines,
-      `*TOTAL: ${money(total)}*`,
-
+      '', '*DETALLE DEL PEDIDO*', '', ...orderLines,
+      ...(selectedRewardName ? [
+        `🎁 *CANJE: ${selectedRewardName}*`,
+        `Subtotal: ${money(subtotal)}`,
+        ...(discount ? [`Descuento por puntos: -${money(discount)}`] : [])
+      ] : []),
+      `*TOTAL FINAL: ${money(total)}*`,
+      ...(cashAmount !== null ? [
+        `Abona con: ${money(cashAmount)}`,
+        `Vuelto: ${money(cashAmount-total)}`
+      ] : []),
       ...(notes ? [`Observaciones: ${notes}`] : [])
     ].join('\n');
-
-    const whatsappUrl =
-      `https://wa.me/${WHATSAPP_NUMBER}` +
-      `?text=${encodeURIComponent(message)}`;
-
-    // Abrir la pestaña antes de la operación
-    // asíncrona para reducir bloqueos del navegador.
-
-    popup = window.open('about:blank', '_blank');
-
-    // GUARDAR EN SUPABASE
-
-    button.textContent = 'REGISTRANDO PEDIDO...';
-    status.textContent = 'Registrando tu pedido...';
-
-    const { error } = await db
-      .from('orders')
-      .insert({
-        id: orderId,
-        customer_name: name,
-        customer_phone: customerPhone,
-        delivery_type: delivery,
-        address,
-        notes: storedNotes,
-        items,
-        total,
-        status: 'iniciado_whatsapp'
-      });
-
-    if (error) {
-      throw new Error(
-        'No se pudo registrar el pedido: ' +
-        error.message
-      );
-    }
-
-    // MOSTRAR CONFIRMACIÓN Y ENLACE AL PEDIDO
+    const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
 
     status.replaceChildren();
-
     const text = document.createElement('span');
-    text.textContent =
-      'Pedido registrado. Confirmalo enviando ' +
-      'el mensaje en WhatsApp. ';
-
+    text.textContent = 'Pedido registrado. Confirmalo enviando el WhatsApp. ';
     const link = document.createElement('a');
-    link.href = whatsappUrl;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
+    link.href = url; link.target='_blank';link.rel='noopener noreferrer';
     link.textContent = 'Abrir WhatsApp';
-
-    status.append(text, link);
-
-    // LIMPIAR CARRITO SOLO CUANDO SE GUARDÓ
-
-    cart.clear();
-    renderCart();
-
-    // REDIRIGIR A WHATSAPP
-
-    if (popup && !popup.closed) {
-      popup.location.href = whatsappUrl;
-    } else {
-      window.location.href = whatsappUrl;
-    }
-
-  } catch (error) {
-    if (popup && !popup.closed) {
-      popup.close();
-    }
-
-    console.error('Error en checkout HOST:', error);
-
-    const message =
-      error?.message ||
-      'Ocurrió un error al procesar el pedido.';
-
-    status.textContent = message;
-    alert(message);
-
+    status.append(text,link);
+    cart.clear();renderCart();
+    if (popup && !popup.closed) popup.location.href = url;
+    else window.location.href = url;
+  } catch(error) {
+    if (popup && !popup.closed) popup.close();
+    console.error('Checkout HOST:',error);
+    status.textContent = error?.message || 'Error al enviar el pedido.';
+    alert(status.textContent);
   } finally {
-    // El botón nunca queda bloqueado por un error.
-
     button.disabled = false;
     button.textContent = 'CONTINUAR PEDIDO ›';
   }
