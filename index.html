@@ -14,6 +14,252 @@
 
 <body class="menu-page">
 
+  
+<!-- PANTALLA DE CARGA HOST -->
+
+<style>
+  #host-loading {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background:
+      radial-gradient(
+        ellipse at 50% 65%,
+        rgba(150, 18, 5, 0.20),
+        transparent 55%
+      ),
+      #050505;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 24px;
+    transition: opacity .55s ease, visibility .55s ease;
+  }
+
+  #host-loading.is-exiting {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .host-loading-logo {
+    width: min(420px, 85vw);
+    height: auto;
+    object-fit: contain;
+    filter: drop-shadow(0 12px 28px rgba(230, 38, 8, .18));
+    animation: host-logo-enter 1.1s ease both,
+               host-logo-glow 2.2s ease-in-out infinite alternate;
+  }
+
+  .host-loading-fallback {
+    display: none;
+    color: white;
+    font-size: clamp(54px, 12vw, 86px);
+    font-weight: 1000;
+    letter-spacing: -3px;
+  }
+
+  .host-loading-subtitle {
+    color: #ffc329;
+    font-family: 'Barlow', sans-serif;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 3px;
+    text-align: center;
+  }
+
+  .host-loading-track {
+    position: relative;
+    overflow: hidden;
+    width: 190px;
+    height: 4px;
+    margin-top: 15px;
+    border-radius: 20px;
+    background: #333;
+  }
+
+  .host-loading-progress {
+    position: absolute;
+    height: 100%;
+    width: 45%;
+    border-radius: 20px;
+    background: linear-gradient(
+      90deg,
+      #ed171f,
+      #ff7b00,
+      #ffc329
+    );
+    box-shadow: 0 0 14px rgba(255, 100, 0, .6);
+    animation: host-loading-slide 1.35s ease-in-out infinite;
+  }
+
+  .host-loading-text {
+    color: #888;
+    font-family: 'Barlow', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+  }
+
+  @keyframes host-logo-enter {
+    from {
+      opacity: 0;
+      transform: translateY(14px) scale(.94);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes host-logo-glow {
+    from {
+      filter: drop-shadow(
+        0 8px 12px rgba(255, 45, 0, .08)
+      );
+    }
+    to {
+      filter: drop-shadow(
+        0 12px 32px rgba(255, 65, 0, .32)
+      );
+    }
+  }
+
+  @keyframes host-loading-slide {
+    from {
+      left: -45%;
+    }
+    to {
+      left: 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .host-loading-logo,
+    .host-loading-progress {
+      animation: none;
+    }
+
+    .host-loading-progress {
+      left: 25%;
+    }
+  }
+</style>
+
+<div id="host-loading" role="status" aria-label="Cargando menú de HOST">
+
+  <img
+    src="./assets/logo-host.png"
+    alt="HOST"
+    class="host-loading-logo"
+    onerror="
+      this.style.display='none';
+      this.nextElementSibling.style.display='block';
+    "
+  >
+
+  <div class="host-loading-fallback">
+    HOST 🔥
+  </div>
+
+  <div class="host-loading-subtitle">
+    EL SABOR QUE PRENDE TODO
+  </div>
+
+  <div class="host-loading-track" aria-hidden="true">
+    <div class="host-loading-progress"></div>
+  </div>
+
+  <div class="host-loading-text">
+    CARGANDO MENÚ...
+  </div>
+
+</div>
+
+<script>
+(function () {
+  const started = Date.now();
+
+  function initHostLoading() {
+    const loader = document.getElementById('host-loading');
+    const products = document.getElementById('products');
+    const setup = document.getElementById('setup');
+
+    if (!loader) return;
+
+    let closing = false;
+    let observer;
+
+    function finishLoading() {
+      if (closing) return;
+
+      closing = true;
+
+      if (observer) observer.disconnect();
+
+      // Mostrar brevemente la presentación de HOST.
+      const remaining = Math.max(
+        0,
+        700 - (Date.now() - started)
+      );
+
+      setTimeout(function () {
+        loader.classList.add('is-exiting');
+
+        setTimeout(function () {
+          loader.remove();
+        }, 600);
+      }, remaining);
+    }
+
+    function checkMenu() {
+      // Productos cargados o aviso de configuración.
+      if (
+        (products && products.children.length > 0) ||
+        (setup && !setup.classList.contains('hidden'))
+      ) {
+        finishLoading();
+      }
+    }
+
+    observer = new MutationObserver(checkMenu);
+
+    if (products) {
+      observer.observe(products, {
+        childList: true
+      });
+    }
+
+    if (setup) {
+      observer.observe(setup, {
+        attributes: true,
+        attributeFilter: ['class']
+      });
+    }
+
+    checkMenu();
+
+    // Protección: nunca dejar bloqueada la página.
+    setTimeout(finishLoading, 8000);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener(
+      'DOMContentLoaded',
+      initHostLoading,
+      { once: true }
+    );
+  } else {
+    initHostLoading();
+  }
+})();
+</script>
+
+<!-- FIN DE LA PANTALLA DE CARGA HOST -->
+
+
   <!-- LLAMAS DECORATIVAS DEL FONDO -->
   <div class="fire-background" aria-hidden="true">
     <svg viewBox="0 0 1200 850"
