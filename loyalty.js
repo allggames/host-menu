@@ -814,3 +814,11 @@ if (main && !$('puntos')) {
     setTab('login');
   };
 }
+
+
+export function getHostRewardsCredentials() {
+  return signedPhone && signedCode
+    ? { phone: signedPhone, code: signedCode }
+    : null;
+}
+
