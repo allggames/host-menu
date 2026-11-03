@@ -1246,3 +1246,25 @@ body.menu-page {
     height: 30px;
   }
 }
+
+
+
+/* LOGO HOST - ENCABEZADO */
+
+.menu-page .brand-image {
+  display: block;
+  width: 200px;
+  height: 88px;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  border: none;
+  border-radius: 0;
+}
+
+@media (max-width: 620px) {
+  .menu-page .brand-image {
+    width: 170px;
+    height: 75px;
+  }
+}
