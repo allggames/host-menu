@@ -1,6 +1,7 @@
 
 import { db, money, escapeHTML, uid, alertError } from './shared.js';
 import { configured, WHATSAPP_NUMBER } from './config.js';
+import { normalizeHostPhone } from './loyalty.js';
 
 const $ = selector => document.querySelector(selector);
 const h = value => escapeHTML(String(value ?? ''));
@@ -804,6 +805,18 @@ $('#checkout').onsubmit = async event => {
     form.get('name') || ''
   ).trim();
 
+  const customerPhone = normalizeHostPhone(
+  form.get('customer_phone')
+);
+
+if (!customerPhone) {
+  button.disabled = false;
+  return alert(
+    'Ingresá un celular válido para registrar tus puntos. ' +
+    'Ejemplo: 3764123456'
+  );
+}
+
   const delivery = String(
     form.get('delivery') || ''
   );
@@ -907,6 +920,7 @@ $('#checkout').onsubmit = async event => {
 
     `Código: ${orderId.slice(0, 8).toUpperCase()}`,
     `Cliente: ${name}`,
+    `Celular: ${customerPhone}`,
     `Entrega: ${delivery}`,
     `Pago: ${payment}`,
 
@@ -955,6 +969,7 @@ $('#checkout').onsubmit = async event => {
       .insert({
         id: orderId,
         customer_name: name,
+        customer_phone: customerPhone,
         delivery_type: delivery,
         address,
         notes: storedNotes,
