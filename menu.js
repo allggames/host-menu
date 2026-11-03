@@ -776,18 +776,6 @@ $('#checkout').onsubmit = async event => {
 
   button.disabled = true;
 
-  const form = new FormData(event.target);
-
-const customerPhone = normalizeHostPhone(
-  form.get('customer_phone')
-);
-
-if (!customerPhone) {
-  button.disabled = false;
-  return alert('Ingresá un celular válido.');
-}
-
-
   const items = [...cart].map(([, item]) => {
     const product = products.find(
       p => p.id === item.id
