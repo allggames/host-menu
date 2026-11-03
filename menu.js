@@ -753,216 +753,238 @@ $('#delivery').onchange = () => {
   $('#address').required = delivery;
 };
 
-// FINALIZAR PEDIDO POR WHATSAPP
+
+ // FINALIZAR PEDIDO POR WHATSAPP - CORREGIDO
 
 $('#checkout').onsubmit = async event => {
   event.preventDefault();
 
+  const button = $('#send');
+  const status = $('#checkout-status');
+
   if (!configured) {
-    return alert('Falta configurar Supabase');
+    alert('Falta configurar Supabase');
+    return;
   }
 
   if (!cart.size) {
-    return alert('Agregá al menos un producto');
+    alert('Agregá al menos un producto');
+    return;
   }
 
   if (!/^\d{10,15}$/.test(WHATSAPP_NUMBER)) {
-    return alert(
-      'HOST todavía no configuró su número de WhatsApp'
-    );
+    alert('HOST todavía no configuró su número de WhatsApp');
+    return;
   }
-
-  const button = $('#send');
 
   button.disabled = true;
+  button.textContent = 'PREPARANDO PEDIDO...';
+  status.textContent = '';
 
-  const items = [...cart].map(([, item]) => {
-    const product = products.find(
-      p => p.id === item.id
-    );
+  let popup = null;
 
-    return {
-      product_id: item.id,
-      name: product.name,
-      price:
-        Number(product.price) +
-        optionTotal(item.selected),
-      quantity: item.quantity,
-      options: item.selected
-    };
-  });
+  try {
+    const form = new FormData(event.target);
 
-  const total = items.reduce(
-    (sum, item) =>
-      sum + item.price * item.quantity,
-    0
-  );
+    // DATOS DEL CLIENTE
 
-  const orderId = uid();
+    const name = String(form.get('name') || '').trim();
 
-  const name = String(
-    form.get('name') || ''
-  ).trim();
-
-  const customerPhone = normalizeHostPhone(
-  form.get('customer_phone')
-);
-
-if (!customerPhone) {
-  button.disabled = false;
-  return alert(
-    'Ingresá un celular válido para registrar tus puntos. ' +
-    'Ejemplo: 3764123456'
-  );
-}
-
-  const delivery = String(
-    form.get('delivery') || ''
-  );
-
-  const address = String(
-    form.get('address') || ''
-  ).trim();
-
-  const notes = String(
-    form.get('notes') || ''
-  ).trim();
-
-  const payment = String(
-    form.get('payment') || ''
-  );
-
-  const cashAmount =
-    payment === 'Efectivo' &&
-    form.get('cash_amount') !== ''
-      ? Number(form.get('cash_amount'))
-      : null;
-
-  // Validaciones de pago.
-
-  if (![
-    'Efectivo',
-    'Transferencia / Mercado Pago'
-  ].includes(payment)) {
-    button.disabled = false;
-    return alert('Seleccioná una forma de pago');
-  }
-
-  if (
-    cashAmount !== null &&
-    (
-      !Number.isFinite(cashAmount) ||
-      cashAmount < total
-    )
-  ) {
-    button.disabled = false;
-
-    return alert(
-      'El efectivo indicado debe alcanzar el total del pedido'
-    );
-  }
-
-  const paymentNotes =
-    `Forma de pago: ${payment}` +
-    (
-      cashAmount !== null
-        ? ` | Abona con: ${money(cashAmount)} | Vuelto: ${money(cashAmount - total)}`
-        : ''
-    );
-
-  const storedNotes = [
-    paymentNotes,
-    notes
-  ].filter(Boolean).join('\n');
-
-  // Detalle con cantidades de opcionales.
-
-  const orderLines = items.flatMap(item => {
-    const lines = [
-      `• ${item.quantity} × ${item.name} — ${money(item.quantity * item.price)}`
-    ];
-
-    const grouped = new Map();
-
-    for (const option of item.options) {
-      if (!grouped.has(option.group)) {
-        grouped.set(option.group, []);
-      }
-
-      grouped.get(option.group).push(option);
+    if (!name) {
+      throw new Error('Ingresá tu nombre.');
     }
 
-    for (const [group, options] of grouped) {
-      lines.push(`  *${group}:*`);
+    const customerPhone = normalizeHostPhone(
+      form.get('customer_phone')
+    );
 
-      for (const option of options) {
-        lines.push(
-          `  - ${optionQuantity(option)} × ${option.name}` +
-          (
-            Number(option.extra_price)
-              ? ` (+${money(Number(option.extra_price) * optionQuantity(option))})`
-              : ''
-          )
+    if (!customerPhone) {
+      throw new Error(
+        'Ingresá un celular válido. Ejemplo: 3764123456'
+      );
+    }
+
+    const delivery = String(form.get('delivery') || '');
+
+    const address = String(
+      form.get('address') || ''
+    ).trim();
+
+    if (delivery === 'Delivery' && !address) {
+      throw new Error('Ingresá la dirección de entrega.');
+    }
+
+    const notes = String(
+      form.get('notes') || ''
+    ).trim();
+
+    const payment = String(
+      form.get('payment') || ''
+    );
+
+    if (![
+      'Efectivo',
+      'Transferencia / Mercado Pago'
+    ].includes(payment)) {
+      throw new Error('Seleccioná una forma de pago.');
+    }
+
+    // PRODUCTOS Y OPCIONALES
+
+    const items = [...cart.values()].map(item => {
+      const product = products.find(
+        p => p.id === item.id
+      );
+
+      if (!product) {
+        throw new Error(
+          'No encontramos uno de los productos del carrito.'
+        );
+      }
+
+      const unitPrice =
+        Number(product.price) +
+        optionTotal(item.selected);
+
+      return {
+        product_id: item.id,
+        name: product.name,
+        price: unitPrice,
+        quantity: item.quantity,
+        options: item.selected
+      };
+    });
+
+    const total = items.reduce(
+      (sum, item) => sum + item.price * item.quantity,
+      0
+    );
+
+    // EFECTIVO: EL CAMPO ES OPCIONAL
+
+    const cashText = String(
+      form.get('cash_amount') ?? ''
+    ).trim();
+
+    let cashAmount = null;
+
+    if (payment === 'Efectivo' && cashText !== '') {
+      cashAmount = Number(cashText);
+
+      if (
+        !Number.isFinite(cashAmount) ||
+        cashAmount < total
+      ) {
+        throw new Error(
+          'El monto en efectivo debe alcanzar el total.'
         );
       }
     }
 
-    lines.push('');
+    // DATOS DEL PEDIDO
 
-    return lines;
-  });
+    const orderId = uid();
 
-  // Mensaje final.
+    const paymentNotes =
+      `Forma de pago: ${payment}` +
+      (
+        cashAmount !== null
+          ? ` | Abona con: ${money(cashAmount)}` +
+            ` | Vuelto: ${money(cashAmount - total)}`
+          : ''
+      );
 
-  const message = [
-    '🍗 *PEDIDO HOST*',
-
-    `Código: ${orderId.slice(0, 8).toUpperCase()}`,
-    `Cliente: ${name}`,
-    `Celular: ${customerPhone}`,
-    `Entrega: ${delivery}`,
-    `Pago: ${payment}`,
-
-    ...(
-      cashAmount !== null
-        ? [
-            `Abona con: ${money(cashAmount)}`,
-            `Vuelto: ${money(cashAmount - total)}`
-          ]
-        : []
-    ),
-
-    ...(
-      address
-        ? [`Dirección: ${address}`]
-        : []
-    ),
-
-    '',
-    '*DETALLE DEL PEDIDO*',
-    '',
-
-    ...orderLines,
-
-    `*TOTAL: ${money(total)}*`,
-
-    ...(
+    const storedNotes = [
+      paymentNotes,
       notes
-        ? [`Observaciones: ${notes}`]
-        : []
-    )
+    ].filter(Boolean).join('\n');
 
-  ].join('\n');
+    // DETALLE DE PRODUCTOS
 
-  const whatsappUrl =
-    `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+    const orderLines = items.flatMap(item => {
+      const lines = [
+        `• ${item.quantity} × ${item.name} — ` +
+        money(item.quantity * item.price)
+      ];
 
-  const popup = window.open(
-    'about:blank',
-    '_blank'
-  );
+      const grouped = new Map();
 
-  try {
+      for (const option of item.options || []) {
+        if (!grouped.has(option.group)) {
+          grouped.set(option.group, []);
+        }
+
+        grouped.get(option.group).push(option);
+      }
+
+      for (const [group, options] of grouped) {
+        lines.push(`  *${group}:*`);
+
+        for (const option of options) {
+          const quantity = optionQuantity(option);
+
+          lines.push(
+            `  - ${quantity} × ${option.name}` +
+            (
+              Number(option.extra_price)
+                ? ` (+${money(
+                    Number(option.extra_price) * quantity
+                  )})`
+                : ''
+            )
+          );
+        }
+      }
+
+      lines.push('');
+
+      return lines;
+    });
+
+    // MENSAJE PARA WHATSAPP
+
+    const message = [
+      '🍗 *PEDIDO HOST*',
+      `Código: ${orderId.slice(0, 8).toUpperCase()}`,
+      `Cliente: ${name}`,
+      `Celular: ${customerPhone}`,
+      `Entrega: ${delivery}`,
+      `Pago: ${payment}`,
+
+      ...(
+        cashAmount !== null
+          ? [
+              `Abona con: ${money(cashAmount)}`,
+              `Vuelto: ${money(cashAmount - total)}`
+            ]
+          : []
+      ),
+
+      ...(address ? [`Dirección: ${address}`] : []),
+
+      '',
+      '*DETALLE DEL PEDIDO*',
+      '',
+      ...orderLines,
+      `*TOTAL: ${money(total)}*`,
+
+      ...(notes ? [`Observaciones: ${notes}`] : [])
+    ].join('\n');
+
+    const whatsappUrl =
+      `https://wa.me/${WHATSAPP_NUMBER}` +
+      `?text=${encodeURIComponent(message)}`;
+
+    // Abrir la pestaña antes de la operación
+    // asíncrona para reducir bloqueos del navegador.
+
+    popup = window.open('about:blank', '_blank');
+
+    // GUARDAR EN SUPABASE
+
+    button.textContent = 'REGISTRANDO PEDIDO...';
+    status.textContent = 'Registrando tu pedido...';
+
     const { error } = await db
       .from('orders')
       .insert({
@@ -977,26 +999,61 @@ if (!customerPhone) {
         status: 'iniciado_whatsapp'
       });
 
-    if (error) throw error;
+    if (error) {
+      throw new Error(
+        'No se pudo registrar el pedido: ' +
+        error.message
+      );
+    }
 
-    $('#checkout-status').textContent =
-      'Pedido registrado como iniciado. Confirmalo enviando el mensaje en WhatsApp.';
+    // MOSTRAR CONFIRMACIÓN Y ENLACE AL PEDIDO
+
+    status.replaceChildren();
+
+    const text = document.createElement('span');
+    text.textContent =
+      'Pedido registrado. Confirmalo enviando ' +
+      'el mensaje en WhatsApp. ';
+
+    const link = document.createElement('a');
+    link.href = whatsappUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = 'Abrir WhatsApp';
+
+    status.append(text, link);
+
+    // LIMPIAR CARRITO SOLO CUANDO SE GUARDÓ
 
     cart.clear();
     renderCart();
 
-    if (popup) {
+    // REDIRIGIR A WHATSAPP
+
+    if (popup && !popup.closed) {
       popup.location.href = whatsappUrl;
     } else {
       window.location.href = whatsappUrl;
     }
 
   } catch (error) {
-    if (popup) popup.close();
+    if (popup && !popup.closed) {
+      popup.close();
+    }
 
-    alertError(error);
+    console.error('Error en checkout HOST:', error);
+
+    const message =
+      error?.message ||
+      'Ocurrió un error al procesar el pedido.';
+
+    status.textContent = message;
+    alert(message);
 
   } finally {
+    // El botón nunca queda bloqueado por un error.
+
     button.disabled = false;
+    button.textContent = 'CONTINUAR PEDIDO ›';
   }
 };
