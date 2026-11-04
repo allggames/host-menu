@@ -4,7 +4,7 @@ const panelHost = document.querySelector('#dashboard');
 const tabs = panelHost?.querySelector('.tabs');
 const h = v => escapeHTML(String(v ?? ''));
 const $ = id => document.getElementById(id);
-let clients = [], purchases = [], adjustments = [], selectedId = null;
+let clients = [], purchases = [], adjustments = [], redemptions = [], selectedId = null;
 const fmt = n => Number(n||0).toLocaleString('es-AR');
 const date = v => v ? new Date(v).toLocaleDateString('es-AR') : '-';
 
@@ -52,7 +52,9 @@ if (panelHost && tabs && !$('points-panel')) {
     return data;
   };
   const pointTotal = id => purchases.filter(x=>x.customer_id===id).reduce((s,x)=>s+Number(x.points),0)
-    +adjustments.filter(x=>x.customer_id===id).reduce((s,x)=>s+Number(x.delta),0);
+    +adjustments.filter(x=>x.customer_id===id).reduce((s,x)=>s+Number(x.delta),0)
+    -redemptions.filter(x=>x.customer_id===id && x.status!=='canceled')
+      .reduce((s,x)=>s+Number(x.points_cost),0);
   function render() {
     $('host-points-summary').textContent = `${clients.length} clientes · ${fmt(clients.reduce((s,c)=>s+pointTotal(c.id),0))} puntos`;
     const q=$('host-search').value.trim().toLowerCase();
@@ -73,7 +75,9 @@ if (panelHost && tabs && !$('points-panel')) {
     if(!c) {target.innerHTML='';return;}
     const history=[
       ...purchases.filter(x=>x.customer_id===c.id).map(x=>({created_at:x.credited_at,reason:'Compra confirmada',delta:x.points})),
-      ...adjustments.filter(x=>x.customer_id===c.id).map(x=>({created_at:x.created_at,reason:x.reason,delta:x.delta}))
+      ...adjustments.filter(x=>x.customer_id===c.id).map(x=>({created_at:x.created_at,reason:x.reason,delta:x.delta})),
+      ...redemptions.filter(x=>x.customer_id===c.id && x.status!=='canceled')
+        .map(x=>({created_at:x.created_at,reason:'Canje: '+x.reward_name+(x.status==='reserved'?' (pendiente)':''),delta:-x.points_cost}))
     ].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
     target.innerHTML=`<div class="host-client-info">
       <div class="row"><div class="grow"><h3>${h(c.name)}</h3><p>${h(c.phone)}</p>
@@ -148,10 +152,11 @@ if (panelHost && tabs && !$('points-panel')) {
     message('Cargando...');
     try{
       await authorize();
-      [clients,purchases,adjustments]=await Promise.all([
+      [clients,purchases,adjustments,redemptions]=await Promise.all([
         fetchAll('host_customers','id,name,phone,created_at,access_approved,access_code_encrypted','created_at'),
         fetchAll('host_points','order_id,customer_id,points,credited_at','credited_at'),
-        fetchAll('host_point_adjustments','id,customer_id,delta,reason,created_at','created_at')
+        fetchAll('host_point_adjustments','id,customer_id,delta,reason,created_at','created_at'),
+        fetchAll('host_redemptions','id,customer_id,points_cost,reward_name,status,created_at','created_at')
       ]);
       render();message('');
     }catch(e){message('Error: '+e.message);}
@@ -161,7 +166,7 @@ if (panelHost && tabs && !$('points-panel')) {
   });
   tab.onclick=()=>{
     tabs.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b===tab));
-    for(const x of ['categories','products','options','orders']) $(x+'-panel')?.classList.add('hidden');
+    for(const x of ['categories','products','options','orders','canjes']) $(x+'-panel')?.classList.add('hidden');
     panel.classList.remove('hidden');reload();
   };
   $('host-search').oninput=render;
