@@ -121,7 +121,8 @@ function updatePreview() {
 async function load() {
   const {data,error} = await db.from('host_rewards_catalog')
     .select('id,name,kind,points_cost,discount_percent,active,position')
-    .eq('active',true).order('position');
+    .eq('active',true).order('points_cost', { ascending: true });
+
   if (error) {
     if (catalog.isConnected) catalog.textContent = 'No se pudieron cargar las recompensas: ' + error.message;
     return;
