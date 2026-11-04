@@ -1,10 +1,32 @@
 
-import { db, money, escapeHTML, uid, alertError } from './shared.js';
-import { configured, WHATSAPP_NUMBER } from './config.js';
-import { normalizeHostPhone } from './loyalty.js';
-import { getHostLoyaltyOrder } from './host-points-prompt.js';
-import { setHostCanjeSubtotal, getHostCanje, getHostCanjeCredentials, registerHostRedeemedOrder } from './host-canjes.js';
+import {
+  db,
+  money,
+  escapeHTML,
+  uid,
+  alertError
+} from './shared.js';
 
+import {
+  configured,
+  WHATSAPP_NUMBER
+} from './config.js';
+
+import {
+  normalizeHostPhone
+} from './loyalty.js';
+
+import {
+  getHostLoyaltyOrder
+} from './host-points-prompt.js';
+
+import {
+  setHostCanjeSubtotal,
+  validateHostCanjeSelection,
+  getHostCanjeCredentials,
+  registerHostRedeemedOrder,
+  registerHostCanjeOptionsPicker
+} from './host-canjes.js';
 
 const $ = selector => document.querySelector(selector);
 const h = value => escapeHTML(String(value ?? ''));
@@ -28,11 +50,26 @@ if (!configured) {
 
 async function load() {
   const [c, p, g, v, l] = await Promise.all([
-    db.from('categories').select('*').order('position'),
-    db.from('products').select('*').eq('available', true).order('position'),
-    db.from('option_groups').select('*').order('position'),
-    db.from('option_values').select('*').order('position'),
-    db.from('product_option_groups').select('*').order('position')
+    db.from('categories')
+      .select('*')
+      .order('position'),
+
+    db.from('products')
+      .select('*')
+      .eq('available', true)
+      .order('position'),
+
+    db.from('option_groups')
+      .select('*')
+      .order('position'),
+
+    db.from('option_values')
+      .select('*')
+      .order('position'),
+
+    db.from('product_option_groups')
+      .select('*')
+      .order('position')
   ]);
 
   for (const result of [c, p, g, v, l]) {
@@ -50,12 +87,12 @@ async function load() {
 
 // TARJETAS DE PRODUCTOS
 
-// La misma tarjeta se utiliza en el menú normal
-// y en la sección de productos destacados.
-
 function productCard(p, featured = false) {
   return `
-    <article class="product ${featured ? 'host-featured-card' : ''}">
+    <article class="product ${
+      featured ? 'host-featured-card' : ''
+    }">
+
       ${
         p.image_url
           ? `<img
@@ -82,14 +119,18 @@ function productCard(p, featured = false) {
         ${money(p.price)}
       </div>
 
-      <button type="button" data-add="${h(p.id)}">
+      <button
+        type="button"
+        data-add="${h(p.id)}"
+      >
         Agregar +
       </button>
+
     </article>
   `;
 }
 
-// NUEVA SECCIÓN DE DESTACADOS
+// PRODUCTOS DESTACADOS
 
 function renderFeatured() {
   const layout = document.querySelector('.store-layout');
@@ -104,12 +145,7 @@ function renderFeatured() {
     section.id = 'host-featured';
     section.className = 'store-products';
 
-    // La sección queda debajo del banner
-    // y antes del menú normal.
-
     layout.before(section);
-
-    // Estilos propios sin modificar style.css.
 
     const style = document.createElement('style');
 
@@ -148,12 +184,14 @@ function renderFeatured() {
     document.head.append(style);
   }
 
-  // Mostrar solamente productos disponibles
-  // que estén marcados como destacados.
+  const featured = products.filter(
+    p => p.featured === true
+  );
 
-  const featured = products.filter(p => p.featured === true);
-
-  section.classList.toggle('hidden', featured.length === 0);
+  section.classList.toggle(
+    'hidden',
+    featured.length === 0
+  );
 
   if (!featured.length) {
     section.innerHTML = '';
@@ -163,6 +201,7 @@ function renderFeatured() {
   section.innerHTML = `
     <div class="section-heading">
       <div>
+
         <span class="section-kicker">
           🔥 LOS FAVORITOS DE HOST
         </span>
@@ -170,11 +209,14 @@ function renderFeatured() {
         <h2>
           PRODUCTOS <span>DESTACADOS</span>
         </h2>
+
       </div>
     </div>
 
     <div class="grid">
-      ${featured.map(p => productCard(p, true)).join('')}
+      ${featured.map(
+        p => productCard(p, true)
+      ).join('')}
     </div>
   `;
 }
@@ -186,45 +228,56 @@ function render() {
 
   categoryContainer.replaceChildren();
 
-  [['all', 'Todos'], ...categories.map(c => [c.id, c.name])]
-    .forEach(([id, name]) => {
-      const button = document.createElement('button');
+  [
+    ['all', 'Todos'],
+    ...categories.map(c => [c.id, c.name])
+  ].forEach(([id, name]) => {
+    const button = document.createElement('button');
 
-      button.type = 'button';
-      button.textContent = name;
-      button.className = active === id ? 'active' : '';
+    button.type = 'button';
+    button.textContent = name;
+    button.className =
+      active === id ? 'active' : '';
 
-      button.onclick = () => {
-        active = id;
-        render();
-      };
+    button.onclick = () => {
+      active = id;
+      render();
+    };
 
-      categoryContainer.append(button);
-    });
+    categoryContainer.append(button);
+  });
 
   $('#products').innerHTML = products
-    .filter(p => active === 'all' || p.category_id === active)
+    .filter(
+      p =>
+        active === 'all' ||
+        p.category_id === active
+    )
     .map(p => productCard(p))
-    .join('') || '<p>No hay productos en esta categoría.</p>';
-
-  // Mostrar destacados.
+    .join('') ||
+    '<p>No hay productos en esta categoría.</p>';
 
   renderFeatured();
 
-  // IMPORTANTE:
-  // Conectar los botones Agregar +
-  // tanto del menú como de los destacados.
+  // Conectar botones Agregar +.
 
-  document.querySelectorAll('[data-add]').forEach(button => {
-    button.onclick = () => chooseOptions(button.dataset.add);
-  });
+  document.querySelectorAll('[data-add]')
+    .forEach(button => {
+      button.onclick = () =>
+        chooseOptions(button.dataset.add);
+    });
 
   renderCart();
 }
 
 // SELECCIÓN DE OPCIONALES CON CANTIDADES
+// También sirve para configurar premios canjeados.
 
-function chooseOptions(id) {
+function chooseOptions(
+  id,
+  onSelected = null,
+  onCanceled = null
+) {
   const product = products.find(
     p => String(p.id) === String(id)
   );
@@ -232,48 +285,66 @@ function chooseOptions(id) {
   if (!product) return;
 
   const groups = productLinks
-    .filter(link => String(link.product_id) === String(id))
+    .filter(
+      link =>
+        String(link.product_id) === String(id)
+    )
     .map(link =>
       optionGroups.find(
-        g => String(g.id) === String(link.group_id)
+        g =>
+          String(g.id) === String(link.group_id)
       )
     )
     .filter(Boolean);
 
-  // Si no tiene opcionales, agregar directamente.
+  // Si no tiene opcionales:
+  // agregarlo directamente o confirmar premio.
 
   if (!groups.length) {
-    addConfigured(product, []);
+    if (onSelected) {
+      onSelected([]);
+    } else {
+      addConfigured(product, []);
+    }
+
     return;
   }
 
-  // Detectar grupos que no tengan opciones cargadas.
+  // Verificar grupos vacíos.
 
   const emptyGroup = groups.find(g =>
     Number(g.max_select) > 0 &&
     !optionValues.some(
-      v => String(v.group_id) === String(g.id)
+      v =>
+        String(v.group_id) === String(g.id)
     )
   );
 
   if (emptyGroup) {
     alert(
-      `El grupo "${emptyGroup.name}" no tiene opciones cargadas. Contactá a HOST.`
+      `El grupo "${emptyGroup.name}" ` +
+      'no tiene opciones cargadas. Contactá a HOST.'
     );
     return;
   }
 
   const quantities = new Map();
-
   const overlay = document.createElement('div');
 
   overlay.className = 'option-overlay';
 
   overlay.innerHTML = `
-    <div class="option-dialog" role="dialog" aria-modal="true">
+    <div
+      class="option-dialog"
+      role="dialog"
+      aria-modal="true"
+    >
 
       <div class="row">
-        <h2 class="grow">${h(product.name)}</h2>
+
+        <h2 class="grow">
+          ${h(product.name)}
+        </h2>
 
         <button
           type="button"
@@ -282,10 +353,12 @@ function chooseOptions(id) {
         >
           ✕
         </button>
+
       </div>
 
       <p class="muted">
-        Personalizá tu pedido. Completá el cupo de cada grupo.
+        Personalizá tu pedido.
+        Completá el cupo de cada grupo.
       </p>
 
       <form id="choose-form">
@@ -294,15 +367,20 @@ function chooseOptions(id) {
           const max = Number(g.max_select);
 
           const options = optionValues.filter(
-            v => String(v.group_id) === String(g.id)
+            v =>
+              String(v.group_id) === String(g.id)
           );
 
           return `
-            <fieldset data-option-group="${h(g.id)}">
+            <fieldset
+              data-option-group="${h(g.id)}"
+            >
 
               <legend>
                 <strong>${h(g.name)}</strong>
-                <small>Elegí ${max} unidades</small>
+                <small>
+                  Elegí ${max} unidades
+                </small>
               </legend>
 
               ${options.map(v => `
@@ -330,7 +408,9 @@ function chooseOptions(id) {
                       −
                     </button>
 
-                    <strong data-option-count="${h(v.id)}">
+                    <strong
+                      data-option-count="${h(v.id)}"
+                    >
                       0
                     </strong>
 
@@ -343,6 +423,7 @@ function chooseOptions(id) {
                     </button>
 
                   </div>
+
                 </div>
               `).join('')}
 
@@ -352,34 +433,44 @@ function chooseOptions(id) {
           `;
         }).join('')}
 
-        <button type="submit" id="confirm-options">
+        <button
+          type="submit"
+          id="confirm-options"
+        >
           Agregar al carrito
         </button>
 
       </form>
+
     </div>
   `;
 
   document.body.append(overlay);
 
-  const form = overlay.querySelector('#choose-form');
-  const confirmButton = overlay.querySelector('#confirm-options');
+  const form =
+    overlay.querySelector('#choose-form');
 
-  // Contar unidades seleccionadas por grupo.
+  const confirmButton =
+    overlay.querySelector('#confirm-options');
+
+  // CONTAR UNIDADES ELEGIDAS
 
   function groupTotal(group) {
     return optionValues
       .filter(
-        v => String(v.group_id) === String(group.id)
+        v =>
+          String(v.group_id) === String(group.id)
       )
       .reduce(
         (sum, v) =>
-          sum + (quantities.get(String(v.id)) || 0),
+          sum + (
+            quantities.get(String(v.id)) || 0
+          ),
         0
       );
   }
 
-  // Actualizar botones y validar cupos.
+  // ACTUALIZAR CUPOS
 
   function updateSelections() {
     let complete = true;
@@ -389,15 +480,20 @@ function chooseOptions(id) {
       const total = groupTotal(group);
 
       const fieldset = [
-        ...form.querySelectorAll('[data-option-group]')
+        ...form.querySelectorAll(
+          '[data-option-group]'
+        )
       ].find(
-        el => el.dataset.optionGroup === String(group.id)
+        el =>
+          el.dataset.optionGroup ===
+          String(group.id)
       );
 
       if (!fieldset) continue;
 
       const groupValues = optionValues.filter(
-        v => String(v.group_id) === String(group.id)
+        v =>
+          String(v.group_id) === String(group.id)
       );
 
       for (const value of groupValues) {
@@ -405,28 +501,46 @@ function chooseOptions(id) {
           quantities.get(String(value.id)) || 0;
 
         const count = [
-          ...fieldset.querySelectorAll('[data-option-count]')
+          ...fieldset.querySelectorAll(
+            '[data-option-count]'
+          )
         ].find(
-          el => el.dataset.optionCount === String(value.id)
+          el =>
+            el.dataset.optionCount ===
+            String(value.id)
         );
 
         const plus = [
-          ...fieldset.querySelectorAll('[data-option-plus]')
+          ...fieldset.querySelectorAll(
+            '[data-option-plus]'
+          )
         ].find(
-          el => el.dataset.optionPlus === String(value.id)
+          el =>
+            el.dataset.optionPlus ===
+            String(value.id)
         );
 
         const minus = [
-          ...fieldset.querySelectorAll('[data-option-minus]')
+          ...fieldset.querySelectorAll(
+            '[data-option-minus]'
+          )
         ].find(
-          el => el.dataset.optionMinus === String(value.id)
+          el =>
+            el.dataset.optionMinus ===
+            String(value.id)
         );
 
-        if (count) count.textContent = quantity;
+        if (count) {
+          count.textContent = quantity;
+        }
 
-        if (plus) plus.disabled = total >= max;
+        if (plus) {
+          plus.disabled = total >= max;
+        }
 
-        if (minus) minus.disabled = quantity <= 0;
+        if (minus) {
+          minus.disabled = quantity <= 0;
+        }
       }
 
       const status = fieldset.querySelector(
@@ -435,7 +549,8 @@ function chooseOptions(id) {
 
       status.textContent = total === max
         ? `✓ Cupo completo: ${total} de ${max}`
-        : `${total} de ${max} unidades · Faltan ${max - total}`;
+        : `${total} de ${max} unidades · ` +
+          `Faltan ${max - total}`;
 
       if (total !== max) {
         complete = false;
@@ -447,7 +562,7 @@ function chooseOptions(id) {
     return complete;
   }
 
-  // Botones + y - de los opcionales.
+  // BOTONES + Y - DE OPCIONALES
 
   form.addEventListener('click', event => {
     const plus = event.target.closest(
@@ -473,39 +588,66 @@ function chooseOptions(id) {
     if (!value) return;
 
     const group = groups.find(
-      g => String(g.id) === String(value.group_id)
+      g =>
+        String(g.id) === String(value.group_id)
     );
 
     if (!group) return;
 
-    const current = quantities.get(optionId) || 0;
+    const current =
+      quantities.get(optionId) || 0;
 
     if (
       plus &&
-      groupTotal(group) < Number(group.max_select)
+      groupTotal(group) <
+      Number(group.max_select)
     ) {
-      quantities.set(optionId, current + 1);
+      quantities.set(
+        optionId,
+        current + 1
+      );
     }
 
     if (minus && current > 0) {
-      quantities.set(optionId, current - 1);
+      quantities.set(
+        optionId,
+        current - 1
+      );
     }
 
     updateSelections();
   });
 
-  // Cerrar ventana.
+  // CERRAR VENTANA
 
-  overlay.querySelector('[data-close-options]').onclick =
-    () => overlay.remove();
+  const closeOptions = () => {
+    overlay.remove();
 
-  overlay.onclick = event => {
-    if (event.target === overlay) {
-      overlay.remove();
+    if (onCanceled) {
+      onCanceled();
     }
   };
 
-  // Confirmar configuración del producto.
+  overlay
+    .querySelector('[data-close-options]')
+    .onclick = closeOptions;
+
+  overlay.onclick = event => {
+    if (event.target === overlay) {
+      closeOptions();
+    }
+  };
+
+  // Diferenciar botón para canjes.
+
+  if (onSelected) {
+    overlay
+      .querySelector('#confirm-options')
+      .textContent =
+        'GUARDAR OPCIONES DEL PREMIO';
+  }
+
+  // GUARDAR OPCIONES
 
   form.onsubmit = event => {
     event.preventDefault();
@@ -521,7 +663,8 @@ function chooseOptions(id) {
 
     for (const group of groups) {
       const groupValues = optionValues.filter(
-        v => String(v.group_id) === String(group.id)
+        v =>
+          String(v.group_id) === String(group.id)
       );
 
       for (const value of groupValues) {
@@ -540,12 +683,24 @@ function chooseOptions(id) {
       }
     }
 
-    addConfigured(product, selected);
+    // Producto común: sumar al carrito.
+    // Premio: guardar opciones sin cobrar producto.
+
+    if (onSelected) {
+      onSelected(selected);
+    } else {
+      addConfigured(product, selected);
+    }
+
     overlay.remove();
   };
 
   updateSelections();
 }
+
+// CONECTAR EL SELECTOR CON HOST CANJES
+
+registerHostCanjeOptionsPicker(chooseOptions);
 
 // PRECIOS DE OPCIONALES
 
@@ -557,7 +712,8 @@ function optionTotal(selected) {
   return selected.reduce(
     (sum, option) =>
       sum +
-      Number(option.extra_price) * optionQuantity(option),
+      Number(option.extra_price) *
+      optionQuantity(option),
     0
   );
 }
@@ -565,8 +721,6 @@ function optionTotal(selected) {
 // AGREGAR PRODUCTO AL CARRITO
 
 function addConfigured(product, selected) {
-  // Diferenciar combinaciones distintas.
-
   const key = product.id + '|' + selected
     .map(
       option =>
@@ -579,19 +733,21 @@ function addConfigured(product, selected) {
 
   cart.set(key, {
     id: product.id,
-    quantity: (existing?.quantity || 0) + 1,
+
+    quantity:
+      (existing?.quantity || 0) + 1,
+
     selected
   });
 
   renderCart();
 
-  // Mostrar confirmación al agregar.
+  // AVISO DE PRODUCTO AGREGADO
 
   let notice = $('#host-cart-notice');
 
   if (!notice) {
     notice = document.createElement('div');
-
     notice.id = 'host-cart-notice';
 
     Object.assign(notice.style, {
@@ -630,95 +786,114 @@ function addConfigured(product, selected) {
 function renderCart() {
   const entries = [...cart];
 
-  $('#cart').innerHTML = entries.map(([key, item]) => {
-    const p = products.find(
-      product => product.id === item.id
-    );
+  $('#cart').innerHTML = entries
+    .map(([key, item]) => {
+      const p = products.find(
+        product => product.id === item.id
+      );
 
-    if (!p) return '';
+      if (!p) return '';
 
-    const unit =
-      Number(p.price) + optionTotal(item.selected);
+      const unit =
+        Number(p.price) +
+        optionTotal(item.selected);
 
-    return `
-      <div class="item-row">
+      return `
+        <div class="item-row">
 
-        <div>
-          <strong>${h(p.name)}</strong>
-          <br>
+          <div>
+            <strong>${h(p.name)}</strong>
+            <br>
 
-          ${item.selected.map(option =>
-            `${optionQuantity(option)} × ${h(option.group)}: ${h(option.name)}`
-          ).join('<br>')}
+            ${item.selected.map(option =>
+              `${optionQuantity(option)} × ` +
+              `${h(option.group)}: ` +
+              `${h(option.name)}`
+            ).join('<br>')}
 
-          ${item.selected.length ? '<br>' : ''}
+            ${item.selected.length ? '<br>' : ''}
 
-          ${item.quantity} × ${money(unit)}
-          = ${money(item.quantity * unit)}
+            ${item.quantity} × ${money(unit)}
+            = ${money(item.quantity * unit)}
+
+          </div>
+
+          <div class="actions">
+
+            <button
+              type="button"
+              class="secondary"
+              data-minus="${h(key)}"
+            >
+              −
+            </button>
+
+            <button
+              type="button"
+              data-plus="${h(key)}"
+            >
+              +
+            </button>
+
+          </div>
+
         </div>
-
-        <div class="actions">
-          <button
-            type="button"
-            class="secondary"
-            data-minus="${h(key)}"
-          >
-            −
-          </button>
-
-          <button
-            type="button"
-            data-plus="${h(key)}"
-          >
-            +
-          </button>
-        </div>
-
-      </div>
-    `;
-  }).join('') ||
+      `;
+    })
+    .join('') ||
     '<p class="muted">Tu carrito está vacío.</p>';
 
-  const total = entries.reduce((sum, [, item]) => {
-    const p = products.find(
-      product => product.id === item.id
-    );
+  const total = entries.reduce(
+    (sum, [, item]) => {
+      const p = products.find(
+        product => product.id === item.id
+      );
 
-    return sum + item.quantity * (
-      Number(p?.price || 0) +
-      optionTotal(item.selected)
-    );
-  }, 0);
+      return sum + item.quantity * (
+        Number(p?.price || 0) +
+        optionTotal(item.selected)
+      );
+    },
+    0
+  );
 
   $('#total').textContent = money(total);
+
+  // Informar subtotal a HOST CANJES.
+
   setHostCanjeSubtotal(total);
 
-  // Quitar unidades.
+  // RESTAR PRODUCTOS
 
-  document.querySelectorAll('[data-minus]').forEach(
-    button => {
+  document.querySelectorAll('[data-minus]')
+    .forEach(button => {
       button.onclick = () => {
-        const item = cart.get(button.dataset.minus);
+        const item = cart.get(
+          button.dataset.minus
+        );
 
         if (!item) return;
 
         item.quantity--;
 
         if (item.quantity <= 0) {
-          cart.delete(button.dataset.minus);
+          cart.delete(
+            button.dataset.minus
+          );
         }
 
         renderCart();
       };
-    }
-  );
+    });
 
-  // Agregar más unidades de la misma combinación.
+  // SUMAR PRODUCTOS
 
-  document.querySelectorAll('[data-plus]').forEach(
-    button => {
+  document.querySelectorAll('[data-plus]')
+    .forEach(button => {
       button.onclick = () => {
-        const item = cart.get(button.dataset.plus);
+        const item = cart.get(
+          button.dataset.plus
+        );
 
         if (!item) return;
 
@@ -726,16 +901,19 @@ function renderCart() {
 
         renderCart();
       };
-    }
-  );
+    });
 }
 
 // FORMA DE PAGO
 
 $('#payment').onchange = () => {
-  const cash = $('#payment').value === 'Efectivo';
+  const cash =
+    $('#payment').value === 'Efectivo';
 
-  $('#cash-wrap').classList.toggle('hidden', !cash);
+  $('#cash-wrap').classList.toggle(
+    'hidden',
+    !cash
+  );
 
   if (!cash) {
     $('#cash_amount').value = '';
@@ -756,167 +934,528 @@ $('#delivery').onchange = () => {
   $('#address').required = delivery;
 };
 
-
 // FINALIZAR PEDIDO POR WHATSAPP Y CANJES HOST
+
 $('#checkout').onsubmit = async event => {
   event.preventDefault();
-  if (!configured) return alert('Falta configurar Supabase.');
-  if (!cart.size) return alert('Agregá un producto al carrito.');
+
+  if (!configured) {
+    return alert(
+      'Falta configurar Supabase.'
+    );
+  }
+
+  // Los premios físicos pueden pedirse
+  // aunque el carrito normal esté vacío.
+
   if (!/^\d{10,15}$/.test(WHATSAPP_NUMBER)) {
-    return alert('El WhatsApp de HOST no está configurado.');
+    return alert(
+      'El WhatsApp de HOST no está configurado.'
+    );
   }
 
   const button = $('#send');
   const status = $('#checkout-status');
+
   button.disabled = true;
   button.textContent = 'PREPARANDO PEDIDO...';
+
   status.textContent = '';
+
   let popup = null;
 
   try {
     const form = new FormData(event.target);
-    const name = String(form.get('name') || '').trim();
-    const delivery = String(form.get('delivery') || '');
-    const address = String(form.get('address') || '').trim();
-    const notes = String(form.get('notes') || '').trim();
-    const payment = String(form.get('payment') || '');
-    const cashRaw = String(form.get('cash_amount') ?? '').trim();
-    const cashAmount = payment === 'Efectivo' && cashRaw !== ''
-      ? Number(cashRaw) : null;
-    if (!name) throw Error('Ingresá tu nombre.');
-    if (delivery === 'Delivery' && !address) throw Error('Ingresá la dirección de entrega.');
-    if (!['Delivery', 'Retiro en local'].includes(delivery)) throw Error('Elegí una entrega válida.');
-    if (!['Efectivo','Transferencia / Mercado Pago'].includes(payment)) throw Error('Seleccioná una forma de pago.');
-    if (cashAmount !== null && (!Number.isFinite(cashAmount) || cashAmount < 0)) {
-      throw Error('El importe de efectivo es inválido.');
+
+    const name = String(
+      form.get('name') || ''
+    ).trim();
+
+    const delivery = String(
+      form.get('delivery') || ''
+    );
+
+    const address = String(
+      form.get('address') || ''
+    ).trim();
+
+    const notes = String(
+      form.get('notes') || ''
+    ).trim();
+
+    const payment = String(
+      form.get('payment') || ''
+    );
+
+    const cashRaw = String(
+      form.get('cash_amount') ?? ''
+    ).trim();
+
+    const cashAmount =
+      payment === 'Efectivo' &&
+      cashRaw !== ''
+        ? Number(cashRaw)
+        : null;
+
+    // VALIDAR DATOS
+
+    if (!name) {
+      throw Error('Ingresá tu nombre.');
     }
 
-    const reward = getHostCanje();
-    const credential = getHostCanjeCredentials();
-    const loyalty = getHostLoyaltyOrder();
+    if (
+      delivery === 'Delivery' &&
+      !address
+    ) {
+      throw Error(
+        'Ingresá la dirección de entrega.'
+      );
+    }
+
+    if (![
+      'Delivery',
+      'Retiro en local'
+    ].includes(delivery)) {
+      throw Error(
+        'Elegí una entrega válida.'
+      );
+    }
+
+    if (![
+      'Efectivo',
+      'Transferencia / Mercado Pago'
+    ].includes(payment)) {
+      throw Error(
+        'Seleccioná una forma de pago.'
+      );
+    }
+
+    if (
+      cashAmount !== null &&
+      (
+        !Number.isFinite(cashAmount) ||
+        cashAmount < 0
+      )
+    ) {
+      throw Error(
+        'El importe de efectivo es inválido.'
+      );
+    }
+
+    // VALIDAR PREMIO ELEGIDO
+
+    const reward =
+      validateHostCanjeSelection();
+
+    if (
+      !cart.size &&
+      (
+        !reward ||
+        reward.kind !== 'product'
+      )
+    ) {
+      throw Error(
+        'Agregá un producto al carrito ' +
+        'o elegí un premio para canjear.'
+      );
+    }
+
+    // IDENTIFICACIÓN DEL CLIENTE
+
+    const credential =
+      getHostCanjeCredentials();
+
+    const loyalty =
+      getHostLoyaltyOrder();
+
     const customerPhone = reward
       ? credential?.phone
-      : loyalty.wantsPoints ? loyalty.phone : null;
+      : loyalty.wantsPoints
+        ? loyalty.phone
+        : null;
 
-    if (loyalty.wantsPoints && !customerPhone && !reward) {
-      throw Error('Iniciá sesión en HOST PUNTOS o continuá sin puntos.');
-    }
-    if (reward && (!credential?.phone || !credential?.code)) {
-      throw Error('Iniciá sesión en HOST PUNTOS para usar tus puntos.');
+    if (
+      loyalty.wantsPoints &&
+      !customerPhone &&
+      !reward
+    ) {
+      throw Error(
+        'Iniciá sesión en HOST PUNTOS ' +
+        'o continuá sin puntos.'
+      );
     }
 
-    const items = [...cart.values()].map(item => {
-      const product = products.find(p => p.id === item.id);
-      if (!product) throw Error('Un producto del carrito dejó de estar disponible.');
+    if (
+      reward &&
+      (
+        !credential?.phone ||
+        !credential?.code
+      )
+    ) {
+      throw Error(
+        'Iniciá sesión en HOST PUNTOS ' +
+        'para usar tus puntos.'
+      );
+    }
+
+    // PRODUCTOS DEL CARRITO
+
+    const items = [
+      ...cart.values()
+    ].map(item => {
+      const product = products.find(
+        p => p.id === item.id
+      );
+
+      if (!product) {
+        throw Error(
+          'Un producto del carrito dejó ' +
+          'de estar disponible.'
+        );
+      }
+
       return {
-        product_id: item.id, name: product.name,
-        price: Number(product.price) + optionTotal(item.selected),
-        quantity: item.quantity, options: item.selected
+        product_id: item.id,
+
+        name: product.name,
+
+        price:
+          Number(product.price) +
+          optionTotal(item.selected),
+
+        quantity: item.quantity,
+
+        options: item.selected
       };
     });
-    const subtotal = items.reduce((s, x) => s + Number(x.price)*Number(x.quantity), 0);
+
+    let subtotal = items.reduce(
+      (sum, item) =>
+        sum +
+        Number(item.price) *
+        Number(item.quantity),
+      0
+    );
+
     let total = subtotal;
     let discount = 0;
+
     let selectedRewardName = '';
     let orderItems = items;
     let orderId = uid();
 
-    // Abrir la pestaña antes de esperar a Supabase, para evitar bloqueadores.
-    popup = window.open('about:blank','_blank');
-    button.textContent = 'REGISTRANDO PEDIDO...';
-    status.textContent = 'Guardando tu pedido...';
+    // Abrir ventana de WhatsApp antes de
+    // esperar la respuesta de Supabase.
+
+    popup = window.open(
+      'about:blank',
+      '_blank'
+    );
+
+    button.textContent =
+      'REGISTRANDO PEDIDO...';
+
+    status.textContent =
+      'Guardando tu pedido...';
+
+    // PEDIDO CON CANJE
 
     if (reward) {
-      // El servidor comprueba el código, el saldo, los precios y reserva los puntos.
-      const result = await registerHostRedeemedOrder({
-        reward,
-        phone: credential.phone,
-        code: credential.code,
-        name, delivery, address, notes, payment, cashAmount, items
-      });
+      const result =
+        await registerHostRedeemedOrder({
+          reward,
+          phone: credential.phone,
+          code: credential.code,
+          name,
+          delivery,
+          address,
+          notes,
+          payment,
+          cashAmount,
+          items
+        });
+
       orderId = result.order_id;
-      total = Number(result.total);
-      discount = Number(result.discount || 0);
-      selectedRewardName = result.reward_name;
-      orderItems = result.items;
+
+      subtotal = Number(
+        result.subtotal
+      );
+
+      total = Number(
+        result.total
+      );
+
+      discount = Number(
+        result.discount || 0
+      );
+
+      selectedRewardName =
+        result.reward_name;
+
+      orderItems =
+        result.items;
+
     } else {
-      if (cashAmount !== null && cashAmount < total) {
-        throw Error('El efectivo no alcanza el total del pedido.');
+
+      // PEDIDO NORMAL, SIN CANJE
+
+      if (
+        cashAmount !== null &&
+        cashAmount < total
+      ) {
+        throw Error(
+          'El efectivo no alcanza el total del pedido.'
+        );
       }
-      const paymentNotes = `Forma de pago: ${payment}` +
-        (cashAmount !== null
-          ? ` | Abona con: ${money(cashAmount)} | Vuelto: ${money(cashAmount-total)}`
-          : '');
-      const storedNotes = [paymentNotes, notes].filter(Boolean).join('\n');
-      const { error } = await db.from('orders').insert({
-        id:orderId, customer_name:name, customer_phone:customerPhone,
-        delivery_type:delivery,address,notes:storedNotes,
-        items:orderItems,total,status:'iniciado_whatsapp'
-      });
-      if (error) throw error;
+
+      const paymentNotes =
+        `Forma de pago: ${payment}` +
+        (
+          cashAmount !== null
+            ? ` | Abona con: ${money(cashAmount)}` +
+              ` | Vuelto: ${money(cashAmount - total)}`
+            : ''
+        );
+
+      const storedNotes = [
+        paymentNotes,
+        notes
+      ].filter(Boolean).join('\n');
+
+      const { error } = await db
+        .from('orders')
+        .insert({
+          id: orderId,
+
+          customer_name: name,
+
+          customer_phone:
+            customerPhone,
+
+          delivery_type: delivery,
+
+          address,
+
+          notes: storedNotes,
+
+          items: orderItems,
+
+          total,
+
+          status: 'iniciado_whatsapp'
+        });
+
+      if (error) {
+        throw error;
+      }
     }
 
-    const orderLines = orderItems.flatMap(item => {
-      const lines = [
-        `• ${item.quantity} × ${item.name}` +
-        (item.is_reward ? ' — GRATIS (CANJE)' : ` — ${money(item.quantity*item.price)}`)
-      ];
-      const grouped = new Map();
-      for (const option of item.options || []) {
-        if (!grouped.has(option.group)) grouped.set(option.group,[]);
-        grouped.get(option.group).push(option);
-      }
-      for (const [group,options] of grouped) {
-        lines.push(`  *${group}:*`);
-        for (const option of options) {
-          const q = optionQuantity(option);
-          lines.push(`  - ${q} × ${option.name}`);
+    // PREPARAR PRODUCTOS PARA WHATSAPP
+
+    const orderLines = orderItems.flatMap(
+      item => {
+        const lines = [
+          `• ${item.quantity} × ${item.name}` +
+          (
+            item.is_reward
+              ? (
+                  Number(item.price) > 0
+                    ? ` — CANJE (+ adicionales ` +
+                      `${money(item.price)})`
+                    : ' — GRATIS (CANJE)'
+                )
+              : ` — ${money(
+                  item.quantity * item.price
+                )}`
+          )
+        ];
+
+        const grouped = new Map();
+
+        for (const option of item.options || []) {
+          if (!grouped.has(option.group)) {
+            grouped.set(
+              option.group,
+              []
+            );
+          }
+
+          grouped
+            .get(option.group)
+            .push(option);
         }
+
+        for (const [group, options] of grouped) {
+          lines.push(
+            `  *${group}:*`
+          );
+
+          for (const option of options) {
+            const quantity =
+              optionQuantity(option);
+
+            lines.push(
+              `  - ${quantity} × ${option.name}`
+            );
+          }
+        }
+
+        lines.push('');
+
+        return lines;
       }
-      lines.push('');
-      return lines;
-    });
+    );
+
+    // MENSAJE FINAL PARA WHATSAPP
 
     const message = [
       '🍗 *PEDIDO HOST*',
-      `Código: ${String(orderId).slice(0,8).toUpperCase()}`,
+
+      `Código: ${
+        String(orderId)
+          .slice(0, 8)
+          .toUpperCase()
+      }`,
+
       `Cliente: ${name}`,
-      ...(customerPhone ? [`Celular: ${customerPhone}`] : []),
+
+      ...(
+        customerPhone
+          ? [`Celular: ${customerPhone}`]
+          : []
+      ),
+
       `Entrega: ${delivery}`,
+
       `Pago: ${payment}`,
-      ...(address ? [`Dirección: ${address}`] : []),
-      '', '*DETALLE DEL PEDIDO*', '', ...orderLines,
-      ...(selectedRewardName ? [
-        `🎁 *CANJE: ${selectedRewardName}*`,
-        `Subtotal: ${money(subtotal)}`,
-        ...(discount ? [`Descuento por puntos: -${money(discount)}`] : [])
-      ] : []),
+
+      ...(
+        address
+          ? [`Dirección: ${address}`]
+          : []
+      ),
+
+      '',
+      '*DETALLE DEL PEDIDO*',
+      '',
+
+      ...orderLines,
+
+      ...(
+        selectedRewardName
+          ? [
+              `🎁 *CANJE: ${selectedRewardName}*`,
+
+              `Subtotal: ${money(subtotal)}`,
+
+              ...(
+                discount
+                  ? [
+                      `Descuento por puntos: ` +
+                      `-${money(discount)}`
+                    ]
+                  : []
+              )
+            ]
+          : []
+      ),
+
       `*TOTAL FINAL: ${money(total)}*`,
-      ...(cashAmount !== null ? [
-        `Abona con: ${money(cashAmount)}`,
-        `Vuelto: ${money(cashAmount-total)}`
-      ] : []),
-      ...(notes ? [`Observaciones: ${notes}`] : [])
+
+      ...(
+        cashAmount !== null
+          ? [
+              `Abona con: ${money(cashAmount)}`,
+
+              `Vuelto: ${
+                money(cashAmount - total)
+              }`
+            ]
+          : []
+      ),
+
+      ...(
+        notes
+          ? [`Observaciones: ${notes}`]
+          : []
+      )
+
     ].join('\n');
-    const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+
+    const whatsappUrl =
+      `https://wa.me/${WHATSAPP_NUMBER}` +
+      `?text=${encodeURIComponent(message)}`;
+
+    // CONFIRMAR PEDIDO REGISTRADO
 
     status.replaceChildren();
-    const text = document.createElement('span');
-    text.textContent = 'Pedido registrado. Confirmalo enviando el WhatsApp. ';
-    const link = document.createElement('a');
-    link.href = url; link.target='_blank';link.rel='noopener noreferrer';
-    link.textContent = 'Abrir WhatsApp';
-    status.append(text,link);
-    cart.clear();renderCart();
-    if (popup && !popup.closed) popup.location.href = url;
-    else window.location.href = url;
-  } catch(error) {
-    if (popup && !popup.closed) popup.close();
-    console.error('Checkout HOST:',error);
-    status.textContent = error?.message || 'Error al enviar el pedido.';
+
+    const text =
+      document.createElement('span');
+
+    text.textContent =
+      'Pedido registrado. Confirmalo ' +
+      'enviando el WhatsApp. ';
+
+    const link =
+      document.createElement('a');
+
+    link.href = whatsappUrl;
+
+    link.target = '_blank';
+
+    link.rel =
+      'noopener noreferrer';
+
+    link.textContent =
+      'Abrir WhatsApp';
+
+    status.append(text, link);
+
+    // LIMPIAR CARRITO DESPUÉS DE GUARDAR
+
+    cart.clear();
+    renderCart();
+
+    // ABRIR WHATSAPP
+
+    if (
+      popup &&
+      !popup.closed
+    ) {
+      popup.location.href =
+        whatsappUrl;
+    } else {
+      window.location.href =
+        whatsappUrl;
+    }
+
+  } catch (error) {
+
+    if (
+      popup &&
+      !popup.closed
+    ) {
+      popup.close();
+    }
+
+    console.error(
+      'Checkout HOST:',
+      error
+    );
+
+    status.textContent =
+      error?.message ||
+      'Error al enviar el pedido.';
+
     alert(status.textContent);
+
   } finally {
+
     button.disabled = false;
-    button.textContent = 'CONTINUAR PEDIDO ›';
+
+    button.textContent =
+      'CONTINUAR PEDIDO ›';
+
   }
 };
