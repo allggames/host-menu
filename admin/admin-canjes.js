@@ -92,7 +92,8 @@ if (dashboard && tabs && !$('#canjes-panel')) {
     try{
       await authorize();
       const [r,x,c,o]=await Promise.all([
-        db.from('host_rewards_catalog').select('*').order('position'),
+        db.from('host_rewards_catalog').select('*').order('points_cost', { ascending: true }),
+
         db.from('host_redemptions').select('*').order('created_at',{ascending:false}).limit(500),
         db.from('host_customers').select('id,name,phone').limit(1000),
         db.from('orders').select('id,status,total').order('created_at',{ascending:false}).limit(1000)
