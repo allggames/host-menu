@@ -10,6 +10,41 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Anton&family=Barlow:wght@500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./style.css">
+  
+<script>
+  // Evitar que el navegador recuerde
+  // la posición anterior al recargar.
+
+  if ('scrollRestoration' in history) {
+    history.scrollRestoration = 'manual';
+  }
+
+  const navigation = performance
+    .getEntriesByType('navigation')[0];
+
+  if (navigation?.type === 'reload') {
+
+    // Quitar el # de la URL al recargar.
+    if (window.location.hash) {
+      history.replaceState(
+        null,
+        '',
+        window.location.pathname +
+        window.location.search
+      );
+    }
+
+    // Volver al inicio del menú.
+    window.addEventListener('load', () => {
+      window.scrollTo({
+        top: 0,
+        left: 0,
+        behavior: 'instant'
+      });
+    });
+  }
+</script>
+
 </head>
 
 <body class="menu-page">
