@@ -247,15 +247,37 @@ function render() {
     categoryContainer.append(button);
   });
 
-  $('#products').innerHTML = products
-    .filter(
-      p =>
-        active === 'all' ||
-        p.category_id === active
-    )
+  
+  // ORDEN PERSONALIZADO DE LA SECCIÓN "TODOS"
+
+  const shownProducts = products.filter(
+    p =>
+      active === 'all' ||
+      p.category_id === active
+  );
+
+  if (active === 'all') {
+    shownProducts.sort((a, b) => {
+      const first = a.all_position == null
+        ? Number.MAX_SAFE_INTEGER
+        : Number(a.all_position);
+
+      const second = b.all_position == null
+        ? Number.MAX_SAFE_INTEGER
+        : Number(b.all_position);
+
+      return first - second ||
+        Number(a.position || 0) -
+        Number(b.position || 0) ||
+        a.name.localeCompare(b.name, 'es');
+    });
+  }
+
+  $('#products').innerHTML = shownProducts
     .map(p => productCard(p))
     .join('') ||
     '<p>No hay productos en esta categoría.</p>';
+
 
   renderFeatured();
 
