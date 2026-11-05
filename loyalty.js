@@ -118,7 +118,7 @@ if (main && !$('puntos')) {
             <input
               type="password"
               name="code"
-              inputmode="numeric"
+              inputmode="text"
               maxlength="8"
               minlength="8"
               pattern="[0-9]{8}"
@@ -169,7 +169,7 @@ if (main && !$('puntos')) {
               id="host-new-code"
               name="code"
               type="text"
-              inputmode="numeric"
+              inputmode="text"
               maxlength="8"
               minlength="8"
               pattern="[0-9]{8}"
@@ -292,7 +292,7 @@ if (main && !$('puntos')) {
               <input
                 name="old_code"
                 type="password"
-                inputmode="numeric"
+                inputmode="text"
                 pattern="[0-9]{8}"
                 required
               >
@@ -304,7 +304,7 @@ if (main && !$('puntos')) {
               <input
                 name="new_code"
                 type="text"
-                inputmode="numeric"
+                inputmode="text"
                 pattern="[0-9]{8}"
                 maxlength="8"
                 minlength="8"
