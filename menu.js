@@ -3,7 +3,6 @@ import {
   db,
   money,
   escapeHTML,
-  uid,
   alertError
 } from './shared.js';
 
@@ -247,28 +246,19 @@ function render() {
     categoryContainer.append(button);
   });
 
-  
-  // ORDEN PERSONALIZADO DE LA SECCIÓN "TODOS"
-
+  // Orden exclusivo de «Todos» (se configura desde el administrador).
   const shownProducts = products.filter(
-    p =>
-      active === 'all' ||
-      p.category_id === active
+    p => active === 'all' || p.category_id === active
   );
 
   if (active === 'all') {
     shownProducts.sort((a, b) => {
       const first = a.all_position == null
-        ? Number.MAX_SAFE_INTEGER
-        : Number(a.all_position);
-
+        ? Number.MAX_SAFE_INTEGER : Number(a.all_position);
       const second = b.all_position == null
-        ? Number.MAX_SAFE_INTEGER
-        : Number(b.all_position);
-
+        ? Number.MAX_SAFE_INTEGER : Number(b.all_position);
       return first - second ||
-        Number(a.position || 0) -
-        Number(b.position || 0) ||
+        Number(a.position || 0) - Number(b.position || 0) ||
         a.name.localeCompare(b.name, 'es');
     });
   }
@@ -277,7 +267,6 @@ function render() {
     .map(p => productCard(p))
     .join('') ||
     '<p>No hay productos en esta categoría.</p>';
-
 
   renderFeatured();
 
@@ -1164,7 +1153,7 @@ $('#checkout').onsubmit = async event => {
 
     let selectedRewardName = '';
     let orderItems = items;
-    let orderId = uid();
+    let orderId = null;
 
     // Abrir ventana de WhatsApp antes de
     // esperar la respuesta de Supabase.
@@ -1219,57 +1208,33 @@ $('#checkout').onsubmit = async event => {
 
     } else {
 
-      // PEDIDO NORMAL, SIN CANJE
+      // PEDIDO NORMAL: SUPABASE FIJA PRECIOS, OPCIONALES Y TOTAL.
+      // No se guardan precios enviados por el navegador.
+      // Si el precio del menú cambió, se rechaza ANTES de crear el pedido.
+      const { data: result, error } = await db.rpc(
+        'host_create_normal_order',
+        {
+          p_customer_name: name,
+          p_customer_phone: customerPhone,
+          p_delivery_type: delivery,
+          p_address: address,
+          p_notes: notes,
+          p_payment: payment,
+          p_cash_amount: cashAmount,
+          p_items: items,
+          p_expected_total: total
+        }
+      );
 
-      if (
-        cashAmount !== null &&
-        cashAmount < total
-      ) {
-        throw Error(
-          'El efectivo no alcanza el total del pedido.'
-        );
+      if (error) throw error;
+      if (!result || result.error || !result.order_id || !Array.isArray(result.items)) {
+        throw Error(result?.error || 'No se pudo registrar el pedido.');
       }
 
-      const paymentNotes =
-        `Forma de pago: ${payment}` +
-        (
-          cashAmount !== null
-            ? ` | Abona con: ${money(cashAmount)}` +
-              ` | Vuelto: ${money(cashAmount - total)}`
-            : ''
-        );
-
-      const storedNotes = [
-        paymentNotes,
-        notes
-      ].filter(Boolean).join('\n');
-
-      const { error } = await db
-        .from('orders')
-        .insert({
-          id: orderId,
-
-          customer_name: name,
-
-          customer_phone:
-            customerPhone,
-
-          delivery_type: delivery,
-
-          address,
-
-          notes: storedNotes,
-
-          items: orderItems,
-
-          total,
-
-          status: 'iniciado_whatsapp'
-        });
-
-      if (error) {
-        throw error;
-      }
+      orderId = result.order_id;
+      subtotal = Number(result.subtotal);
+      total = Number(result.total);
+      orderItems = result.items;
     }
 
     // PREPARAR PRODUCTOS PARA WHATSAPP
