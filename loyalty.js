@@ -114,7 +114,7 @@ if (main && !$('puntos')) {
           </label>
 
           <label>
-            Tu código de 8 dígitos
+            Tu código de 8 caracteres
             <input
               type="password"
               name="code"
@@ -163,7 +163,7 @@ if (main && !$('puntos')) {
           </label>
 
           <label>
-            Creá tu código de 8 dígitos
+            Creá tu código de 8 caracteres
 
             <input
               id="host-new-code"
@@ -299,7 +299,7 @@ if (main && !$('puntos')) {
             </label>
 
             <label>
-              Nuevo código (8 dígitos)
+              Nuevo código (8 caracteres)
 
               <input
                 name="new_code"
