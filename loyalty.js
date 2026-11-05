@@ -121,7 +121,7 @@ if (main && !$('puntos')) {
               inputmode="text"
               maxlength="8"
               minlength="8"
-              pattern="[0-9]{8}"
+              pattern="[A-Za-z0-9]{8}"
               required
             >
           </label>
@@ -172,7 +172,7 @@ if (main && !$('puntos')) {
               inputmode="text"
               maxlength="8"
               minlength="8"
-              pattern="[0-9]{8}"
+              pattern="[A-Za-z0-9]{8}"
               required
             >
           </label>
@@ -293,7 +293,7 @@ if (main && !$('puntos')) {
                 name="old_code"
                 type="password"
                 inputmode="text"
-                pattern="[0-9]{8}"
+                pattern="[A-Za-z0-9]{8}"
                 required
               >
             </label>
@@ -305,7 +305,7 @@ if (main && !$('puntos')) {
                 name="new_code"
                 type="text"
                 inputmode="text"
-                pattern="[0-9]{8}"
+                pattern="[A-Za-z0-9]{8}"
                 maxlength="8"
                 minlength="8"
                 required
