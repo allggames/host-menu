@@ -113,9 +113,16 @@ if (panelHost && tabs && !$('points-panel')) {
       // Código generado por el admin si el cliente olvidó el suyo.
       const a=new Uint32Array(1);crypto.getRandomValues(a);
       const suggested=String(a[0]%100000000).padStart(8,'0');
-      const code=prompt('Nuevo código de 8 dígitos para '+c.name,suggested);
+      const code=prompt('Nuevo código de 8 caracteres para '+c.name,suggested);
       if(code===null) return;
-      if(!/^\d{8}$/.test(code)) return alert('Ingresá exactamente 8 dígitos.');
+      
+if (!/^[A-Za-z0-9]{8}$/.test(code)) {
+  return alert(
+    'El código debe tener exactamente 8 caracteres, ' +
+    'con letras y/o números.'
+  );
+}
+
       if(!confirm('El código anterior dejará de funcionar. ¿Confirmás?')) return;
       try {
         await call('host_rewards_admin_reset_code',{p_customer_id:c.id,p_new_code:code});
