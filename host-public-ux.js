@@ -23,7 +23,69 @@
 
     // loyalty.js crea Puntos dinámicamente. Esperamos sus elementos.
     if (!points || !forms || !account || !card || !nav) return false;
-    if (document.getElementById('host-auth-overlay')) return true;
+    if (document.documentElement.dataset.hostUx === '3') return true;
+
+    // Ajustes pedidos: no mostrar el código en la pantalla de la cuenta.
+    // Mantenemos los elementos en el DOM porque loyalty.js los necesita.
+    const codeRow = account.querySelector('.host-loyalty-code-row');
+    if (codeRow) {
+      codeRow.classList.add('host-code-not-visible');
+      const label = codeRow.previousElementSibling;
+      if (label && /tu c[oó]digo de acceso/i.test(label.textContent)) {
+        label.classList.add('host-code-not-visible');
+      }
+    }
+
+    const labelStyle = document.createElement('style');
+    labelStyle.id = 'host-hide-access-code-v3';
+    labelStyle.textContent = `
+      #host-loyalty-account .host-code-not-visible { display: none !important; }
+      #host-loyalty-account .host-loyalty-code-row { display: none !important; }
+      #host-loyalty-account p.host-loyalty-muted:has(+ .host-loyalty-code-row) { display: none !important; }
+    `;
+    if (!document.getElementById(labelStyle.id)) document.head.append(labelStyle);
+
+    // Cambiamos el texto del botón sin sustituir ni desconectar el formulario.
+    const loginSubmit = forms.querySelector('#host-login-form button[type="submit"]');
+    if (loginSubmit) loginSubmit.textContent = 'INGRESAR';
+
+    // El cartel que aparece al agregar un producto tiene su propia lógica
+    // de compra. Dejamos que se ejecute y luego abrimos el formulario modal.
+    function listenInvite(open) {
+      document.addEventListener('click', event => {
+        const button = event.target instanceof Element
+          ? event.target.closest('button,[role="button"]')
+          : null;
+        if (!button) return;
+
+        let mode = button.getAttribute('data-invite');
+        if (mode !== 'login' && mode !== 'register') {
+          if (!button.closest('#host-points-invite')) return;
+          const txt = button.textContent.trim().toLowerCase();
+          if (/ya tengo cuenta|iniciar sesi[oó]n/.test(txt)) mode = 'login';
+          else if (/quiero registrarme|registrarme/.test(txt)) mode = 'register';
+          else return;
+        }
+
+        // Dejar que el evento original marque el pedido como pendiente,
+        // quite su cartel y prepare la continuidad de la compra.
+        queueMicrotask(() => open(mode));
+      }, true);
+    }
+
+    // Compatibilidad: si por accidente quedó también cargado el archivo v2,
+    // actualizar su modal y reutilizar sus botones, sin duplicarlo.
+    const oldOverlay = document.getElementById('host-auth-overlay');
+    if (oldOverlay) {
+      const title = oldOverlay.querySelector('#host-auth-title');
+      if (title) title.textContent = '⭐ INICIAR SESIÓN / REGISTRARME';
+      listenInvite(mode => {
+        const trigger = document.querySelector(`[data-open-host-auth="${mode}"]`);
+        trigger?.click();
+      });
+      document.documentElement.dataset.hostUx = '3';
+      return true;
+    }
 
     // 2. CSS propio (mantiene los colores originales de HOST).
     const style = document.createElement('style');
@@ -127,7 +189,7 @@
            aria-labelledby="host-auth-title" tabindex="-1">
         <div class="host-auth-header">
           <div>
-            <h2 id="host-auth-title">⭐ HOST PUNTOS</h2>
+            <h2 id="host-auth-title">⭐ INICIAR SESIÓN / REGISTRARME</h2>
             <p class="host-auth-subtitle">Ingresá o registrate sin salir de tu pedido.</p>
           </div>
           <button type="button" id="host-auth-close" aria-label="Cerrar ventana">×</button>
@@ -208,7 +270,13 @@
       }
     });
 
-    // 5. El botón del carrito se vuelve a dibujar en cada cambio de canje.
+    // 5. Hacer que las dos opciones del primer cartel abran el modal.
+    // El manejador original sigue funcionando (no se rompe la compra).
+    listenInvite(mode => {
+      openAuth(mode);
+    });
+
+    // 6. El botón del carrito se vuelve a dibujar en cada cambio de canje.
     // Interceptarlo en CAPTURE evita el listener antiguo que hacía scroll a Puntos.
     document.addEventListener('click', event => {
       const target = event.target instanceof Element ? event.target.closest('button,a') : null;
@@ -226,7 +294,7 @@
       openAuth(explicitMode === 'register' ? 'register' : 'login', target);
     }, true);
 
-    // 6. Una vez que loyalty.js confirma el acceso, cerrar la ventana.
+    // 7. Una vez que loyalty.js confirma el acceso, cerrar la ventana.
     function syncAccess() {
       const logged = !account.hidden;
       access.hidden = logged;
@@ -237,7 +305,7 @@
       attributeFilter: ['hidden', 'class']
     });
     syncAccess();
-    document.documentElement.dataset.hostUx = '2';
+    document.documentElement.dataset.hostUx = '3';
     return true;
   }
 
