@@ -79,7 +79,22 @@ async function enter() {
     await db.auth.signOut();
     return;
   }
+  
+  // EXIGIR SEGUNDO FACTOR ANTES DE MOSTRAR EL PANEL
 
+  try {
+    const verified = await requireHostAdminMfa(db);
+
+    if (!verified) return;
+
+  } catch (error) {
+    $('#login-message').textContent =
+      'Seguridad MFA: ' + error.message;
+
+    return;
+  }
+
+  
   $('#login').classList.add('hidden');
   $('#dashboard').classList.remove('hidden');
 
