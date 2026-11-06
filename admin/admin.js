@@ -7,6 +7,8 @@ import {
   alertError
 } from '../shared.js';
 
+import { requireHostAdminMfa } from './admin-mfa.js';
+
 import { configured } from '../config.js';
 
 const $ = s => document.querySelector(s);
