@@ -1,4 +1,4 @@
-
+import { requireHostAdminMfa } from './admin-mfa.js';
 import {
   db,
   money,
@@ -6,8 +6,6 @@ import {
   uid,
   alertError
 } from '../shared.js';
-
-import { requireHostAdminMfa } from './admin-mfa.js';
 
 import { configured } from '../config.js';
 
