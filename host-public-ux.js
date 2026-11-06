@@ -12,18 +12,18 @@
     const card = points?.querySelector('.host-loyalty-card');
     const nav = document.querySelector('.header-nav');
 
-    if (!points || !forms || !account || !card || !nav) {
-      console.warn('HOST: no se encontro la interfaz de Puntos. No se modifico el menu.');
-      return;
+    // Ordenar las pestañas incluso si Puntos todavía se está creando.
+    if (nav) {
+      const sections = ['#menu', '#carrito', '#puntos', '#informacion'];
+      sections.forEach(href => {
+        const link = nav.querySelector(`a[href="${href}"]`);
+        if (link) nav.appendChild(link);
+      });
     }
-    if (document.getElementById('host-auth-overlay')) return;
 
-    // 1. Orden de navegacion: Menu > Carrito > Puntos > Informacion.
-    const sections = ['#menu', '#carrito', '#puntos', '#informacion'];
-    sections.forEach(href => {
-      const link = nav.querySelector(`a[href="${href}"]`);
-      if (link) nav.appendChild(link);
-    });
+    // loyalty.js crea Puntos dinámicamente. Esperamos sus elementos.
+    if (!points || !forms || !account || !card || !nav) return false;
+    if (document.getElementById('host-auth-overlay')) return true;
 
     // 2. CSS propio (mantiene los colores originales de HOST).
     const style = document.createElement('style');
@@ -237,11 +237,30 @@
       attributeFilter: ['hidden', 'class']
     });
     syncAccess();
+    document.documentElement.dataset.hostUx = '2';
+    return true;
+  }
+
+  // Reintenta cuando aparecen las secciones generadas por los módulos.
+  // Así funciona aunque el orden de carga de scripts cambie.
+  let installed = false;
+  const observer = new MutationObserver(() => {
+    if (installed) return;
+    installed = init() === true;
+    if (installed) observer.disconnect();
+  });
+
+  function start() {
+    if (installed) return;
+    installed = init() === true;
+    if (!installed) {
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init, { once: true });
+    document.addEventListener('DOMContentLoaded', start, { once: true });
   } else {
-    init();
+    start();
   }
 })();
