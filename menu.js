@@ -16,8 +16,9 @@ import {
 } from './loyalty.js';
 
 import {
-  getHostLoyaltyOrder
-} from './host-points-prompt.js';
+  getHostLoyaltyOrder,
+  verifyHostLoyaltyOrder
+} from './host-points-prompt.js?v=primer-pedido-1';
 
 import {
   setHostCanjeSubtotal,
@@ -1079,7 +1080,7 @@ $('#checkout').onsubmit = async event => {
     const loyalty =
       getHostLoyaltyOrder();
 
-    const customerPhone = reward
+    let customerPhone = reward
       ? credential?.phone
       : loyalty.wantsPoints
         ? loyalty.phone
@@ -1168,6 +1169,16 @@ $('#checkout').onsubmit = async event => {
 
     status.textContent =
       'Guardando tu pedido...';
+
+    // Confirmar la cuenta ANTES de crear un pedido normal con puntos.
+    // Abrimos WhatsApp primero para no perder la interacción del usuario
+    // (algunas versiones del navegador bloquean ventanas tras un await).
+    if (!reward) {
+      const confirmedLoyalty = await verifyHostLoyaltyOrder();
+      customerPhone = confirmedLoyalty.wantsPoints
+        ? confirmedLoyalty.phone
+        : null;
+    }
 
     // PEDIDO CON CANJE
 
