@@ -612,18 +612,199 @@ $('#product-form').onsubmit = async e => {
   }
 };
 
-// PEDIDOS
+// PEDIDOS ORGANIZADOS POR FECHA (HORA DE POSADAS, ARGENTINA)
+
+const HOST_ORDER_TIMEZONE = 'America/Argentina/Buenos_Aires';
+const HOST_ORDERS_PER_PAGE = 50;
+let selectedOrderDate = hostCurrentDate();
+let orderPage = 0;
+let orderLoadRequest = 0;
+
+// Fecha actual en Argentina, independientemente del huso horario
+// del dispositivo con el que se ingresa al administrador.
+function hostCurrentDate() {
+  const parts = new Intl.DateTimeFormat('es-AR', {
+    timeZone: HOST_ORDER_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+
+  const part = type => parts.find(x => x.type === type)?.value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function hostChangeDate(isoDate, days) {
+  const d = new Date(`${isoDate}T12:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// Argentina utiliza UTC-3. El rango [inicio, fin) evita mezclar
+// pedidos de días vecinos y respeta la hora local de HOST.
+function hostDateRange(isoDate) {
+  const start = new Date(`${isoDate}T03:00:00.000Z`);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return [start.toISOString(), end.toISOString()];
+}
+
+function hostDateLabel(isoDate) {
+  const text = new Date(`${isoDate}T12:00:00.000Z`)
+    .toLocaleDateString('es-AR', {
+      timeZone: HOST_ORDER_TIMEZONE,
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+  return text[0].toUpperCase() + text.slice(1);
+}
+
+// Crear una sola vez la barra de fechas; no altera las otras pestañas.
+function ensureOrderDateTools() {
+  let toolbar = $('#host-order-date-tools');
+  if (toolbar) return toolbar;
+
+  const refresh = $('#refresh-orders');
+  if (!refresh) return null;
+
+  toolbar = document.createElement('div');
+  toolbar.id = 'host-order-date-tools';
+  toolbar.innerHTML = `
+    <div class="host-order-date-controls">
+      <button type="button" id="host-order-previous" class="secondary" title="Día anterior">← Día anterior</button>
+      <label class="host-order-date-label" for="host-order-date">
+        <span>Elegí una fecha</span>
+        <input type="date" id="host-order-date" aria-label="Fecha de los pedidos">
+      </label>
+      <button type="button" id="host-order-next" class="secondary" title="Día siguiente">Día siguiente →</button>
+      <button type="button" id="host-order-today" class="secondary">Hoy</button>
+    </div>
+    <p id="host-order-date-heading" class="host-order-date-heading" aria-live="polite"></p>
+    <p id="host-order-feedback" class="muted" role="status"></p>
+  `;
+
+  refresh.before(toolbar);
+  toolbar.querySelector('.host-order-date-controls').append(refresh);
+
+  const css = document.createElement('style');
+  css.textContent = `
+    #host-order-date-tools { margin: 16px 0; }
+    #host-order-date-tools .host-order-date-controls {
+      display: flex; align-items: end; gap: 10px; flex-wrap: wrap;
+    }
+    #host-order-date-tools .host-order-date-label {
+      display: flex; flex-direction: column; gap: 5px;
+      font-size: 13px; font-weight: 800; min-width: 190px;
+    }
+    #host-order-date-tools .host-order-date-label input {
+      min-height: 43px; width: 100%; box-sizing: border-box;
+    }
+    #host-order-date-tools button { min-height: 43px; }
+    #host-order-date-tools .host-order-date-heading {
+      margin: 18px 0 5px; color: #ffc329;
+      font-weight: 900; font-size: 18px;
+    }
+    #host-order-feedback { min-height: 18px; margin: 5px 0; }
+    #host-order-pagination {
+      display: flex; flex-wrap: wrap; align-items: center;
+      justify-content: center; gap: 12px; margin: 18px 0 6px;
+    }
+    #host-order-pagination button { min-width: 95px; }
+    #host-order-pagination span { font-weight: 800; }
+    @media(max-width: 650px) {
+      #host-order-date-tools .host-order-date-label { flex: 1 1 100%; }
+      #host-order-date-tools .host-order-date-controls > button {
+        flex: 1 1 auto; font-size: 12px;
+      }
+    }
+  `;
+  document.head.append(css);
+
+  toolbar.querySelector('#host-order-date').onchange = e => {
+    const value = e.target.value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
+    selectedOrderDate = value;
+    orderPage = 0;
+    loadOrders().catch(alertError);
+  };
+
+  toolbar.querySelector('#host-order-previous').onclick = () => {
+    selectedOrderDate = hostChangeDate(selectedOrderDate, -1);
+    orderPage = 0;
+    loadOrders().catch(alertError);
+  };
+
+  toolbar.querySelector('#host-order-next').onclick = () => {
+    const next = hostChangeDate(selectedOrderDate, 1);
+    if (next > hostCurrentDate()) return;
+    selectedOrderDate = next;
+    orderPage = 0;
+    loadOrders().catch(alertError);
+  };
+
+  toolbar.querySelector('#host-order-today').onclick = () => {
+    selectedOrderDate = hostCurrentDate();
+    orderPage = 0;
+    loadOrders().catch(alertError);
+  };
+
+  return toolbar;
+}
 
 async function loadOrders() {
-  const { data, error } = await db
-    .from('orders')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(200);
+  const tools = ensureOrderDateTools();
+  if (!tools) return;
 
-  if (error) throw error;
+  const dateInput = tools.querySelector('#host-order-date');
+  dateInput.value = selectedOrderDate;
+  dateInput.max = hostCurrentDate();
+  tools.querySelector('#host-order-next').disabled =
+    selectedOrderDate >= hostCurrentDate();
+  tools.querySelector('#host-order-today').disabled =
+    selectedOrderDate === hostCurrentDate();
+
+  const heading = tools.querySelector('#host-order-date-heading');
+  const feedback = tools.querySelector('#host-order-feedback');
+  const pageMarker = ++orderLoadRequest;
+  const requestedDate = selectedOrderDate;
+  const requestedPage = orderPage;
+  const [start, end] = hostDateRange(requestedDate);
+
+  heading.textContent = hostDateLabel(requestedDate);
+  feedback.textContent = 'Cargando pedidos de esa fecha...';
+
+  const { data, error, count } = await db
+    .from('orders')
+    .select('*', { count: 'exact' })
+    .gte('created_at', start)
+    .lt('created_at', end)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .range(
+      requestedPage * HOST_ORDERS_PER_PAGE,
+      (requestedPage + 1) * HOST_ORDERS_PER_PAGE - 1
+    );
+
+  // Si alguien eligió otra fecha mientras se consultaba,
+  // no reemplazar su listado con una respuesta vieja.
+  if (pageMarker !== orderLoadRequest) return;
+  if (error) {
+    feedback.textContent = 'Error al cargar pedidos: ' + error.message;
+    throw error;
+  }
+
+  const total = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / HOST_ORDERS_PER_PAGE));
+  if (orderPage >= totalPages) {
+    orderPage = totalPages - 1;
+    return loadOrders();
+  }
 
   orders = data || [];
+  feedback.textContent = total === 1
+    ? '1 pedido encontrado.'
+    : `${total} pedidos encontrados.`;
 
   $('#order-list').innerHTML = orders.map(o => `
     <div class="item-row">
@@ -631,55 +812,83 @@ async function loadOrders() {
         <strong>${escapeHTML(o.customer_name)}</strong>
         · ${money(o.total)}
         <br>
-
         <small>
-          ${new Date(o.created_at).toLocaleString('es-AR')}
-          · ${escapeHTML(o.delivery_type)}
+          ${new Date(o.created_at).toLocaleTimeString('es-AR', {
+            timeZone: HOST_ORDER_TIMEZONE,
+            hour: '2-digit', minute: '2-digit'
+          })}
+          · Pedido ${escapeHTML(String(o.id).slice(0, 8).toUpperCase())}
+          · ${escapeHTML(o.delivery_type || '')}
           ${escapeHTML(o.address || '')}
         </small>
-
         <br>
-
         ${
           (o.items || []).map(x =>
             `${Number(x.quantity)} × ${escapeHTML(x.name)}`
           ).join(' · ')
         }
-
         <br>
-
         <small>${escapeHTML(o.notes || '')}</small>
       </div>
-
-      <select style="width:auto" data-status="${o.id}">
-        ${
-          [
-            ['iniciado_whatsapp', 'WhatsApp iniciado'],
-            ['confirmado', 'Confirmado manualmente'],
-            ['preparando', 'Preparando'],
-            ['entregado', 'Entregado'],
-            ['cancelado', 'Cancelado']
-          ].map(([v, l]) => `
-            <option value="${v}"
-              ${o.status === v ? 'selected' : ''}>
-              ${l}
-            </option>
-          `).join('')
-        }
+      <select style="width:auto" data-status="${escapeHTML(o.id)}">
+        ${[
+          ['iniciado_whatsapp', 'WhatsApp iniciado'],
+          ['confirmado', 'Confirmado manualmente'],
+          ['preparando', 'Preparando'],
+          ['entregado', 'Entregado'],
+          ['cancelado', 'Cancelado']
+        ].map(([v, l]) => `
+          <option value="${v}" ${o.status === v ? 'selected' : ''}>
+            ${l}
+          </option>
+        `).join('')}
       </select>
     </div>
-  `).join('') || '<p>No hay pedidos registrados.</p>';
+  `).join('') || '<p class="muted">No hay pedidos para esta fecha.</p>';
 
-  document.querySelectorAll('[data-status]').forEach(s => {
+  document.querySelectorAll('#order-list [data-status]').forEach(s => {
     s.onchange = async () => {
+      const before = orders.find(o => o.id === s.dataset.status)?.status;
+      s.disabled = true;
       const { error } = await db
         .from('orders')
         .update({ status: s.value })
         .eq('id', s.dataset.status);
-
-      if (error) alertError(error);
+      s.disabled = false;
+      if (error) {
+        if (before) s.value = before;
+        alertError(error);
+      } else {
+        const current = orders.find(o => o.id === s.dataset.status);
+        if (current) current.status = s.value;
+      }
     };
   });
+
+  // Paginación interna del día para no dejar pedidos antiguos afuera.
+  let pagination = $('#host-order-pagination');
+  if (!pagination) {
+    pagination = document.createElement('div');
+    pagination.id = 'host-order-pagination';
+    $('#order-list').after(pagination);
+  }
+  pagination.innerHTML = `
+    <button type="button" class="secondary" id="host-orders-newer" ${orderPage === 0 ? 'disabled' : ''}>← Más recientes</button>
+    <span>Página ${orderPage + 1} de ${totalPages}</span>
+    <button type="button" class="secondary" id="host-orders-older" ${orderPage >= totalPages - 1 ? 'disabled' : ''}>Más antiguos →</button>
+  `;
+  pagination.hidden = totalPages < 2;
+
+  pagination.querySelector('#host-orders-newer').onclick = () => {
+    if (orderPage < 1) return;
+    orderPage -= 1;
+    loadOrders().catch(alertError);
+  };
+  pagination.querySelector('#host-orders-older').onclick = () => {
+    if (orderPage >= totalPages - 1) return;
+    orderPage += 1;
+    loadOrders().catch(alertError);
+  };
 }
 
 $('#refresh-orders').onclick = () =>
