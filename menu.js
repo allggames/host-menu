@@ -40,6 +40,35 @@ let active = 'all';
 
 const cart = new Map();
 
+// Descuentos oficiales: solo sobre el precio base del producto.
+// Supabase verifica nuevamente estos mismos valores antes de guardar el pedido.
+const hasHostDiscount = product =>
+  product?.discount_active === true &&
+  Number.isInteger(Number(product.discount_percent)) &&
+  Number(product.discount_percent) >= 1 &&
+  Number(product.discount_percent) <= 90;
+
+const hostBasePrice = product => {
+  const price = Number(product?.price || 0);
+  return hasHostDiscount(product)
+    ? Math.round(price * (100 - Number(product.discount_percent)) / 100)
+    : price;
+};
+
+if (!document.getElementById('host-discounts-style')) {
+  const discountStyle = document.createElement('style');
+  discountStyle.id = 'host-discounts-style';
+  discountStyle.textContent = `
+    .host-sale-price {display:flex;flex-wrap:wrap;gap:9px;align-items:baseline;margin:4px 0}
+    .host-sale-price del {color:#a8a8a8;font-size:.86em;font-weight:600}
+    .host-sale-price strong {color:#ffc329;font-weight:900;font-size:1.18em}
+    .host-sale-tag {display:inline-block;background:#ed171f;color:white;
+      font-size:11px;font-weight:900;letter-spacing:.3px;
+      padding:5px 9px;border-radius:7px;margin:5px 0}
+  `;
+  document.head.append(discountStyle);
+}
+
 if (!configured) {
   $('#setup').classList.remove('hidden');
 } else {
@@ -115,8 +144,14 @@ function productCard(p, featured = false) {
         ${h(p.description)}
       </p>
 
+      ${hasHostDiscount(p)
+        ? `<span class="host-sale-tag">🔥 ${Number(p.discount_percent)}% DE DESCUENTO</span>`
+        : ''}
+
       <div class="price">
-        ${money(p.price)}
+        ${hasHostDiscount(p)
+          ? `<div class="host-sale-price"><del>${money(p.price)}</del><strong>${money(hostBasePrice(p))}</strong></div>`
+          : money(p.price)}
       </div>
 
       <button
@@ -807,7 +842,7 @@ function renderCart() {
       if (!p) return '';
 
       const unit =
-        Number(p.price) +
+        hostBasePrice(p) +
         optionTotal(item.selected);
 
       return `
@@ -862,7 +897,7 @@ function renderCart() {
       );
 
       return sum + item.quantity * (
-        Number(p?.price || 0) +
+        hostBasePrice(p) +
         optionTotal(item.selected)
       );
     },
@@ -1132,7 +1167,7 @@ $('#checkout').onsubmit = async event => {
         name: product.name,
 
         price:
-          Number(product.price) +
+          hostBasePrice(product) +
           optionTotal(item.selected),
 
         quantity: item.quantity,
