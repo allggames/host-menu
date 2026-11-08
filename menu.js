@@ -59,9 +59,55 @@ if (!document.getElementById('host-discounts-style')) {
   const discountStyle = document.createElement('style');
   discountStyle.id = 'host-discounts-style';
   discountStyle.textContent = `
-    .host-sale-price {display:flex;flex-wrap:wrap;gap:9px;align-items:baseline;margin:4px 0}
-    .host-sale-price del {color:#a8a8a8;font-size:.86em;font-weight:600}
-    .host-sale-price strong {color:#ffc329;font-weight:900;font-size:1.18em}
+    /* Precio de oferta separado de .price, que el tema HOST usa como etiqueta amarilla.
+       Así no se recorta ni desaparece el importe final en tarjetas angostas. */
+    .product .host-promo-prices {
+      display:flex !important;
+      flex-direction:column !important;
+      align-items:flex-start !important;
+      justify-content:center !important;
+      gap:3px !important;
+      width:100% !important;
+      min-width:0 !important;
+      min-height:64px !important;
+      height:auto !important;
+      max-height:none !important;
+      overflow:visible !important;
+      box-sizing:border-box !important;
+      padding:9px 12px !important;
+      margin:8px 0 10px !important;
+      background:#17100c !important;
+      border:1px solid rgba(255,195,41,.45) !important;
+      border-radius:9px !important;
+      transform:none !important;
+      text-align:left !important;
+      line-height:1.2 !important;
+    }
+    .product .host-promo-prices .host-promo-before {
+      display:block !important;
+      color:#c5c0bc !important;
+      font-size:12px !important;
+      font-weight:600 !important;
+      line-height:1.3 !important;
+    }
+    .product .host-promo-prices .host-promo-before del {
+      color:#c5c0bc !important;
+      text-decoration:line-through !important;
+    }
+    .product .host-promo-prices .host-promo-final {
+      display:block !important;
+      position:relative !important;
+      color:#ffc329 !important;
+      font-size:clamp(19px, 2.5vw, 25px) !important;
+      font-weight:900 !important;
+      line-height:1.2 !important;
+      white-space:normal !important;
+      overflow:visible !important;
+      opacity:1 !important;
+      visibility:visible !important;
+      text-decoration:none !important;
+      text-shadow:none !important;
+    }
     .host-sale-tag {display:inline-block;background:#ed171f;color:white;
       font-size:11px;font-weight:900;letter-spacing:.3px;
       padding:5px 9px;border-radius:7px;margin:5px 0}
@@ -148,11 +194,12 @@ function productCard(p, featured = false) {
         ? `<span class="host-sale-tag">🔥 ${Number(p.discount_percent)}% DE DESCUENTO</span>`
         : ''}
 
-      <div class="price">
-        ${hasHostDiscount(p)
-          ? `<div class="host-sale-price"><del>${money(p.price)}</del><strong>${money(hostBasePrice(p))}</strong></div>`
-          : money(p.price)}
-      </div>
+      ${hasHostDiscount(p)
+        ? `<div class="host-promo-prices" aria-label="Precio con descuento">
+             <span class="host-promo-before">Antes: <del>${money(p.price)}</del></span>
+             <strong class="host-promo-final">Ahora: ${money(hostBasePrice(p))}</strong>
+           </div>`
+        : `<div class="price">${money(p.price)}</div>`}
 
       <button
         type="button"
