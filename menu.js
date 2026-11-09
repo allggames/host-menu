@@ -28,6 +28,11 @@ import {
   registerHostCanjeOptionsPicker
 } from './host-canjes.js';
 
+import {
+  initHostDeliveryLocation,
+  getHostDeliveryLocation
+} from './host-ubicacion.js';
+
 const $ = selector => document.querySelector(selector);
 const h = value => escapeHTML(String(value ?? ''));
 
@@ -1028,6 +1033,9 @@ $('#delivery').onchange = () => {
   $('#address').required = delivery;
 };
 
+// Campo opcional de ubicación exacta, solo para delivery.
+initHostDeliveryLocation();
+
 // FINALIZAR PEDIDO POR WHATSAPP Y CANJES HOST
 
 $('#checkout').onsubmit = async event => {
@@ -1076,6 +1084,23 @@ $('#checkout').onsubmit = async event => {
     const notes = String(
       form.get('notes') || ''
     ).trim();
+
+    // La ubicación se obtiene solo si el cliente decidió compartirla.
+    const mapLink = delivery === 'Delivery'
+      ? getHostDeliveryLocation()
+      : null;
+
+    // El administrador también podrá verla en las observaciones.
+    const storedNotes = [
+      notes,
+      ...(mapLink ? [`Ubicación Google Maps: ${mapLink}`] : [])
+    ].filter(Boolean).join('\n');
+
+    if (storedNotes.length > 300) {
+      throw Error(
+        'Acortá las observaciones para poder incluir la ubicación en el pedido.'
+      );
+    }
 
     const payment = String(
       form.get('payment') || ''
@@ -1273,7 +1298,7 @@ $('#checkout').onsubmit = async event => {
           name,
           delivery,
           address,
-          notes,
+          notes: storedNotes,
           payment,
           cashAmount,
           items
@@ -1311,7 +1336,7 @@ $('#checkout').onsubmit = async event => {
           p_customer_phone: customerPhone,
           p_delivery_type: delivery,
           p_address: address,
-          p_notes: notes,
+          p_notes: storedNotes,
           p_payment: payment,
           p_cash_amount: cashAmount,
           p_items: items,
@@ -1414,6 +1439,8 @@ $('#checkout').onsubmit = async event => {
           ? [`Dirección: ${address}`]
           : []
       ),
+
+      ...(mapLink ? [`📍 Ubicación exacta (Google Maps): ${mapLink}`] : []),
 
       '',
       '*DETALLE DEL PEDIDO*',
