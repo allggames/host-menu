@@ -353,8 +353,12 @@ function render() {
   });
 
   // Orden exclusivo de «Todos» (se configura desde el administrador).
-  const shownProducts = products.filter(
-    p => active === 'all' || p.category_id === active
+  // En «Todos», mostrar solo productos que NO estén destacados.
+  // En cada categoría, mostrar todos sus productos, incluidos los destacados.
+  const shownProducts = products.filter(p =>
+    active === 'all'
+      ? p.featured !== true
+      : p.category_id === active
   );
 
   if (active === 'all') {
