@@ -47,18 +47,36 @@ const cart = new Map();
 
 // Descuentos oficiales: solo sobre el precio base del producto.
 // Supabase verifica nuevamente estos mismos valores antes de guardar el pedido.
-const hasHostDiscount = product =>
-  product?.discount_active === true &&
-  Number.isInteger(Number(product.discount_percent)) &&
-  Number(product.discount_percent) >= 1 &&
-  Number(product.discount_percent) <= 90;
+// Un producto puede tener un porcentaje o un importe fijo de descuento.
+// El servidor calcula el mismo precio desde los datos oficiales de Supabase.
+const hostSaleType = product =>
+  product?.discount_type === 'amount' ? 'amount' : 'percent';
+
+const hasHostDiscount = product => {
+  if (product?.discount_active !== true) return false;
+  const price = Number(product?.price || 0);
+  if (!(price > 0)) return false;
+  if (hostSaleType(product) === 'amount') {
+    const amount = Number(product.discount_amount);
+    return Number.isFinite(amount) && amount > 0 && amount < price;
+  }
+  const percent = Number(product.discount_percent);
+  return Number.isInteger(percent) && percent >= 1 && percent <= 90;
+};
 
 const hostBasePrice = product => {
   const price = Number(product?.price || 0);
-  return hasHostDiscount(product)
-    ? Math.round(price * (100 - Number(product.discount_percent)) / 100)
-    : price;
+  if (!hasHostDiscount(product)) return price;
+  if (hostSaleType(product) === 'amount') {
+    return Math.round((price - Number(product.discount_amount)) * 100) / 100;
+  }
+  return Math.round(price * (100 - Number(product.discount_percent)) / 100);
 };
+
+const hostDiscountLabel = product =>
+  hostSaleType(product) === 'amount'
+    ? `${money(product.discount_amount)} DE DESCUENTO`
+    : `${Number(product.discount_percent)}% DE DESCUENTO`;
 
 if (!document.getElementById('host-discounts-style')) {
   const discountStyle = document.createElement('style');
@@ -196,7 +214,7 @@ function productCard(p, featured = false) {
       </p>
 
       ${hasHostDiscount(p)
-        ? `<span class="host-sale-tag">🔥 ${Number(p.discount_percent)}% DE DESCUENTO</span>`
+        ? `<span class="host-sale-tag">🔥 ${hostDiscountLabel(p)}</span>`
         : ''}
 
       ${hasHostDiscount(p)
