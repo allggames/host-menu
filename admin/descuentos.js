@@ -1,5 +1,5 @@
 // HOST — Administrador de descuentos por producto.
-// No modifica el precio original; aplica una promoción porcentual temporal.
+// No modifica el precio original; permite descuentos porcentuales o fijos en pesos.
 // Los permisos reales son validados por las políticas RLS de Supabase (MFA AAL2).
 import { db, money, escapeHTML } from '../shared.js';
 
@@ -23,7 +23,7 @@ if (hostDashboard && hostTabs && !$('descuentos-panel')) {
   panel.innerHTML = `
     <h2>🏷️ Descuentos de productos</h2>
     <p class="muted">
-      Elegí un producto, escribí el porcentaje y activá la promoción.
+      Elegí un producto, seleccioná porcentaje (%) o monto fijo ($) y activá la promoción.
       El precio anterior se mostrará tachado y el nuevo precio se cobrará
       también al registrar el pedido. Los opcionales con recargo no se descuentan.
     </p>
@@ -54,7 +54,8 @@ if (hostDashboard && hostTabs && !$('descuentos-panel')) {
     #descuentos-panel .host-sale-card .host-sale-title strong {font-size:17px}
     #descuentos-panel .host-sale-card .host-sale-fields {display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin-top:10px}
     #descuentos-panel .host-sale-fields label {display:flex;flex-direction:column;gap:5px;min-width:120px;flex:1}
-    #descuentos-panel .host-sale-fields input[type="number"] {max-width:140px}
+    #descuentos-panel .host-sale-fields input[type="number"] {max-width:160px}
+    #descuentos-panel .host-sale-fields select {min-width:130px}
     #descuentos-panel .host-sale-fields .host-sale-enabled {flex:0 1 auto;flex-direction:row;align-items:center}
     #descuentos-panel .host-sale-enabled input {width:auto}
     #descuentos-panel .host-sale-price {color:#ffc329;font-weight:900;margin-top:8px}
@@ -71,8 +72,43 @@ if (hostDashboard && hostTabs && !$('descuentos-panel')) {
   const list = $('host-sale-list');
   const message = text => { $('host-sale-message').textContent = String(text || ''); };
 
-  const discountedPrice = (price, percent) =>
-    Math.round(Number(price) * (100 - Number(percent)) / 100);
+  // En pesos se descuenta un importe del precio original (no es precio final).
+  const discountedPrice = (price, type, value) =>
+    type === 'amount'
+      ? Math.round((Number(price) - Number(value)) * 100) / 100
+      : Math.round(Number(price) * (100 - Number(value)) / 100);
+
+  const saleType = p => p.discount_type === 'amount' ? 'amount' : 'percent';
+  const discountDisplay = p => saleType(p) === 'amount'
+    ? `${money(p.discount_amount)} OFF`
+    : `${Number(p.discount_percent)}% OFF`;
+
+  // Mensajes de validación compartidos por la vista previa y el guardado.
+  function saleError(product, type, raw) {
+    if (raw.trim() === '') return 'Ingresá un descuento antes de activarlo.';
+    const value = Number(raw);
+    if (type === 'percent') {
+      return Number.isInteger(value) && value >= 1 && value <= 90
+        ? ''
+        : 'Elegí un porcentaje entero del 1 al 90.';
+    }
+    return Number.isInteger(value) && value > 0 && value < Number(product.price)
+      ? ''
+      : `Elegí un monto entero mayor a $0 y menor que ${money(product.price)}.`;
+  }
+
+  function updateField(card, product) {
+    const type = card.querySelector('[data-sale-type]').value;
+    const fieldLabel = card.querySelector('[data-sale-value-label]');
+    const input = card.querySelector('[data-sale-value]');
+    fieldLabel.firstChild.textContent = type === 'amount'
+      ? 'Monto a descontar ($) ' : 'Descuento (%) ';
+    input.placeholder = type === 'amount' ? 'Ej.: 2000' : 'Ej.: 20';
+    input.max = type === 'amount'
+      ? String(Math.max(0, Math.ceil(Number(product.price)) - 1)) : '90';
+    input.min = '1';
+    input.step = '1';
+  }
 
   async function authorize() {
     const { data: { user }, error } = await db.auth.getUser();
@@ -87,22 +123,31 @@ if (hostDashboard && hostTabs && !$('descuentos-panel')) {
   }
 
   function pricePreview(card, product) {
-    const percent = Number(card.querySelector('[data-sale-percent]').value);
+    const type = card.querySelector('[data-sale-type]').value;
+    const raw = card.querySelector('[data-sale-value]').value.trim();
     const enabled = card.querySelector('[data-sale-enabled]').checked;
     const target = card.querySelector('[data-sale-preview]');
-    if (!enabled) {
+    const invalid = saleError(product, type, raw);
+    if (!enabled && !raw) {
       target.textContent = `Precio normal: ${money(product.price)}`;
       return;
     }
-    if (!Number.isInteger(percent) || percent < 1 || percent > 90) {
-      target.textContent = 'Ingresá un descuento entre 1% y 90%.';
+    if (invalid) {
+      target.textContent = enabled ? invalid : `Promoción pausada · ${invalid}`;
       return;
     }
+    const value = Number(raw);
     target.replaceChildren();
     const oldPrice = document.createElement('del');
     oldPrice.textContent = money(product.price);
     const newPrice = document.createElement('strong');
-    newPrice.textContent = `${money(discountedPrice(product.price, percent))} (${percent}% OFF)`;
+    const label = type === 'amount' ? `${money(value)} OFF` : `${value}% OFF`;
+    newPrice.textContent = `${money(discountedPrice(product.price, type, value))} (${label})`;
+    if (!enabled) {
+      const muted = document.createElement('span');
+      muted.textContent = 'Vista previa (promoción pausada): ';
+      target.append(muted);
+    }
     target.append(oldPrice, newPrice);
   }
 
@@ -119,14 +164,20 @@ if (hostDashboard && hostTabs && !$('descuentos-panel')) {
       <article class="host-sale-card" data-sale-id="${h(p.id)}">
         <div class="host-sale-title">
           <strong>${h(p.name)}</strong>
-          ${p.discount_active ? `<span class="host-sale-badge">-${Number(p.discount_percent)}% ACTIVO</span>` : ''}
+          ${p.discount_active ? `<span class="host-sale-badge">${discountDisplay(p)} · ACTIVO</span>` : ''}
           ${p.available ? '' : '<small class="muted">Producto oculto</small>'}
         </div>
         <small class="muted">Precio original: ${money(p.price)}</small>
         <div class="host-sale-fields">
-          <label>Descuento (%)
-            <input type="number" data-sale-percent min="1" max="90" step="1"
-              value="${p.discount_percent ?? ''}" placeholder="Ej.: 20">
+          <label>Tipo de descuento
+            <select data-sale-type>
+              <option value="percent" ${saleType(p) === 'percent' ? 'selected' : ''}>Porcentaje (%)</option>
+              <option value="amount" ${saleType(p) === 'amount' ? 'selected' : ''}>Monto fijo ($)</option>
+            </select>
+          </label>
+          <label data-sale-value-label>Descuento (%)
+            <input type="number" data-sale-value min="1" step="1"
+              value="${saleType(p) === 'amount' ? (p.discount_amount ?? '') : (p.discount_percent ?? '')}">
           </label>
           <label class="host-sale-enabled">
             <input type="checkbox" data-sale-enabled ${p.discount_active ? 'checked' : ''}>
@@ -135,37 +186,48 @@ if (hostDashboard && hostTabs && !$('descuentos-panel')) {
           <button type="button" data-sale-save>Guardar descuento</button>
         </div>
         <div class="host-sale-price" data-sale-preview></div>
-        <small class="muted">Para desactivar sin perder el porcentaje, desmarcá «Promoción activa» y guardá.</small>
+        <small class="muted">Para pausar la oferta sin perder su valor, desmarcá «Promoción activa» y guardá. El monto fijo se resta al precio original. Escribí los pesos sin separador de miles (ej.: 2000).</small>
       </article>
     `).join('') || '<p class="muted">No hay productos para mostrar.</p>';
 
     list.querySelectorAll('[data-sale-id]').forEach(card => {
       const product = products.find(p => p.id === card.dataset.saleId);
       if (!product) return;
-      const percent = card.querySelector('[data-sale-percent]');
+      const type = card.querySelector('[data-sale-type]');
+      const valueInput = card.querySelector('[data-sale-value]');
       const enabled = card.querySelector('[data-sale-enabled]');
+      updateField(card, product);
       pricePreview(card, product);
-      percent.oninput = () => pricePreview(card, product);
+      type.onchange = () => {
+        valueInput.value = '';
+        updateField(card, product);
+        pricePreview(card, product);
+      };
+      valueInput.oninput = () => pricePreview(card, product);
       enabled.onchange = () => pricePreview(card, product);
       card.querySelector('[data-sale-save]').onclick = async () => {
-        const raw = percent.value.trim();
-        const pct = raw === '' ? null : Number(raw);
-        if (pct !== null && (!Number.isInteger(pct) || pct < 1 || pct > 90)) {
-          return alert('Elegí un porcentaje entero de 1 a 90.');
+        const selectedType = type.value;
+        const raw = valueInput.value.trim();
+        if (raw !== '' && saleError(product, selectedType, raw)) {
+          return alert(saleError(product, selectedType, raw));
         }
-        if (enabled.checked && pct === null) {
-          return alert('Ingresá el porcentaje antes de activar la promoción.');
+        if (enabled.checked && saleError(product, selectedType, raw)) {
+          return alert(saleError(product, selectedType, raw));
         }
-        if (enabled.checked && Number(product.price) <= 0) {
-          return alert('No se puede descontar un producto que tiene precio cero.');
-        }
+        const amount = raw === '' ? null : Number(raw);
+        const update = {
+          discount_type: selectedType,
+          discount_percent: selectedType === 'percent' ? amount : null,
+          discount_amount: selectedType === 'amount' ? amount : null,
+          discount_active: enabled.checked
+        };
         const saving = card.querySelector('[data-sale-save]');
         saving.disabled = true;
         message('Guardando promoción...');
         try {
           await authorize();
           const { data, error } = await db.from('products')
-            .update({ discount_percent: pct, discount_active: enabled.checked })
+            .update(update)
             .eq('id', product.id).select('id');
           if (error) throw error;
           if (!data?.length) throw Error('No se pudo guardar el descuento; revisá los permisos.');
@@ -188,7 +250,7 @@ if (hostDashboard && hostTabs && !$('descuentos-panel')) {
       const rows = [];
       for (let start = 0; ; start += 500) {
         const { data, error } = await db.from('products')
-          .select('id,name,price,available,discount_percent,discount_active')
+          .select('id,name,price,available,discount_type,discount_percent,discount_amount,discount_active')
           .order('name', { ascending: true })
           .range(start, start + 499);
         if (error) throw error;
