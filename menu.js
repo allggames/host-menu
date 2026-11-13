@@ -183,8 +183,15 @@ async function load() {
     if (result.error) throw result.error;
   }
 
-  categories = c.data || [];
-  products = p.data || [];
+  // Ocultar por completo las secciones desactivadas, incluso para admins
+  // que visiten el menu publico con una sesion iniciada.
+  categories = (c.data || []).filter(category => category.visible !== false);
+  const visibleCategoryIds = new Set(
+    categories.map(category => String(category.id))
+  );
+  products = (p.data || []).filter(product =>
+    visibleCategoryIds.has(String(product.category_id))
+  );
   optionGroups = g.data || [];
   optionValues = v.data || [];
   productLinks = l.data || [];
