@@ -1061,6 +1061,7 @@ function renderValues() {
           <span>
             ${escapeHTML(v.name)}
             · +${money(v.extra_price)}
+            · ${Number(v.extra_price) > 0 ? 'Extra opcional' : 'Elección sin cargo (obligatoria)'}
           </span>
 
           <div class="actions">
