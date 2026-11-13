@@ -190,7 +190,14 @@ $('#category-form').onsubmit = async e => {
 function renderCats() {
   $('#category-list').innerHTML = cats.map((c, i) => `
     <div class="item-row">
-      <strong>${escapeHTML(c.name)}</strong>
+      <div>
+        <strong>${escapeHTML(c.name)}</strong>
+        <small class="muted" style="display:block;margin-top:4px">
+          ${c.visible === false
+            ? '🙈 Sección oculta · Productos conservados'
+            : '👁️ Visible en el menú'}
+        </small>
+      </div>
 
       <div class="actions">
         <button class="secondary"
@@ -200,6 +207,11 @@ function renderCats() {
         <button class="secondary"
           data-cat-down="${c.id}"
           ${i === cats.length - 1 ? 'disabled' : ''}>↓</button>
+
+        <button class="secondary"
+          data-cat-visibility="${c.id}">
+          ${c.visible === false ? '👁️ Mostrar sección' : '🙈 Ocultar sección'}
+        </button>
 
         <button class="secondary"
           data-cat-edit="${c.id}">Renombrar</button>
@@ -241,6 +253,33 @@ function renderCats() {
         } catch (e) {
           alertError(e);
         }
+      }
+    };
+  });
+
+  // Ocultar o mostrar una sección sin eliminar productos ni descuentos.
+  document.querySelectorAll('[data-cat-visibility]').forEach(b => {
+    b.onclick = async () => {
+      const category = cats.find(c => c.id === b.dataset.catVisibility);
+      if (!category) return;
+      const wasVisible = category.visible !== false;
+      if (wasVisible && !confirm(
+        `¿Ocultar «${category.name}» del menú público? ` +
+        'Sus productos no aparecerán en Todos ni Destacados, ' +
+        'pero se conservarán y podrás volver a mostrarlos.'
+      )) return;
+      b.disabled = true;
+      try {
+        const { data, error } = await db.from('categories')
+          .update({ visible: !wasVisible })
+          .eq('id', category.id)
+          .select('id,visible');
+        if (error) throw error;
+        if (!data?.length) throw Error('No se pudo cambiar la visibilidad. Revisá los permisos.');
+        await reload();
+      } catch (error) {
+        alertError(error);
+        b.disabled = false;
       }
     };
   });
