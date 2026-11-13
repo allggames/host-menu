@@ -1,4 +1,3 @@
-
 import {
   db,
   money,
@@ -50,9 +49,13 @@ const cart = new Map();
 // Un producto puede tener un porcentaje o un importe fijo de descuento.
 // El servidor calcula el mismo precio desde los datos oficiales de Supabase.
 const hostSaleType = product =>
-  product?.discount_type === 'amount' ? 'amount' : 'percent';
+  (product?.host_offer_type || product?.discount_type) === 'amount'
+    ? 'amount' : 'percent';
 
 const hasHostDiscount = product => {
+  if (Number.isFinite(product?.host_effective_price)) {
+    return product.host_effective_price < Number(product.price);
+  }
   if (product?.discount_active !== true) return false;
   const price = Number(product?.price || 0);
   if (!(price > 0)) return false;
@@ -66,6 +69,9 @@ const hasHostDiscount = product => {
 
 const hostBasePrice = product => {
   const price = Number(product?.price || 0);
+  if (Number.isFinite(product?.host_effective_price)) {
+    return product.host_effective_price;
+  }
   if (!hasHostDiscount(product)) return price;
   if (hostSaleType(product) === 'amount') {
     return Math.round((price - Number(product.discount_amount)) * 100) / 100;
@@ -73,10 +79,13 @@ const hostBasePrice = product => {
   return Math.round(price * (100 - Number(product.discount_percent)) / 100);
 };
 
-const hostDiscountLabel = product =>
-  hostSaleType(product) === 'amount'
-    ? `${money(product.discount_amount)} DE DESCUENTO`
-    : `${Number(product.discount_percent)}% DE DESCUENTO`;
+const hostDiscountLabel = product => {
+  const amount = product?.host_offer_value ?? product?.discount_amount;
+  const percent = product?.host_offer_value ?? product?.discount_percent;
+  return hostSaleType(product) === 'amount'
+    ? `${money(amount)} DE DESCUENTO`
+    : `${Number(percent)}% DE DESCUENTO`;
+};
 
 if (!document.getElementById('host-discounts-style')) {
   const discountStyle = document.createElement('style');
@@ -180,8 +189,59 @@ async function load() {
   optionValues = v.data || [];
   productLinks = l.data || [];
 
+  // Consultar el precio activo del servidor, respetando el horario argentino.
+  await refreshHostOffers();
   render();
 }
+
+// Precios de promociones programadas: el servidor decide cuál está activa.
+// El precio oficial se vuelve a consultar antes de enviar cada pedido.
+async function refreshHostOffers({ rerender = false } = {}) {
+  const { data, error } = await db.rpc('host_public_product_offers');
+  if (error) throw Error('No pudimos actualizar los precios de HOST. Recargá la página.');
+  if (!Array.isArray(data)) throw Error('No se recibieron precios válidos de HOST.');
+
+  const offers = new Map(data.map(x => [String(x.id), x]));
+  let changed = false;
+  for (const product of products) {
+    const offer = offers.get(String(product.id));
+    if (!offer) throw Error('Falta actualizar el precio de un producto de HOST.');
+
+    const original = Number(offer.original_price);
+    const effective = Number(offer.effective_price);
+    if (!Number.isFinite(original) || !Number.isFinite(effective) ||
+        original < 0 || effective < 0 || effective > original) {
+      throw Error('Supabase devolvió un precio inválido.');
+    }
+    const type = effective < original ? offer.promotion_type : null;
+    const value = effective < original ? Number(offer.promotion_value) : null;
+    if (Number(product.price) !== original ||
+        product.host_effective_price !== effective ||
+        product.host_offer_type !== type ||
+        product.host_offer_value !== value) {
+      changed = true;
+    }
+    product.price = original;
+    product.host_effective_price = effective;
+    product.host_offer_type = type;
+    product.host_offer_value = value;
+    product.host_offer_scheduled = offer.scheduled === true;
+  }
+  if (rerender && changed) render();
+}
+
+// Si el cliente deja la página abierta, la promoción aparece o se retira
+// sin tener que cerrarla. No se solicitan permisos adicionales.
+window.setInterval(() => {
+  if (configured && document.visibilityState === 'visible' && products.length) {
+    refreshHostOffers({ rerender: true }).catch(error => console.warn('Ofertas HOST:', error.message));
+  }
+}, 60000);
+document.addEventListener('visibilitychange', () => {
+  if (configured && document.visibilityState === 'visible' && products.length) {
+    refreshHostOffers({ rerender: true }).catch(error => console.warn('Ofertas HOST:', error.message));
+  }
+});
 
 // TARJETAS DE PRODUCTOS
 
@@ -1238,6 +1298,11 @@ $('#checkout').onsubmit = async event => {
         'para usar tus puntos.'
       );
     }
+
+    // Validar el precio vigente justo antes de registrar el pedido.
+    // Un descuento programado puede haber empezado o terminado mientras
+    // el cliente estaba eligiendo productos.
+    await refreshHostOffers({ rerender: true });
 
     // PRODUCTOS DEL CARRITO
 
