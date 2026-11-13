@@ -4,7 +4,7 @@ const panelHost = document.querySelector('#dashboard');
 const tabs = panelHost?.querySelector('.tabs');
 const h = v => escapeHTML(String(v ?? ''));
 const $ = id => document.getElementById(id);
-let clients = [], purchases = [], adjustments = [], redemptions = [], selectedId = null;
+let clients = [], purchases = [], adjustments = [], redemptions = [], profiles = [], selectedId = null;
 let temporaryCodeTimer = null;
 let page = 1;
 let historyPage = 1;
@@ -125,6 +125,20 @@ if (panelHost && tabs && !$('points-panel')) {
     #host-customer-detail .host-history{display:flex;gap:12px;justify-content:space-between;
       padding:10px 0;border-bottom:1px solid #555}
     #host-admin-feedback{color:#d99800;min-height:18px}
+    #host-customer-detail .host-profile-overview{margin:18px 0 20px;padding:16px;
+      background:rgba(15,10,7,.55);border:1px solid rgba(255,195,41,.33);border-radius:12px}
+    #host-customer-detail .host-profile-overview h4{margin:0 0 10px;color:#ffc329;font-size:16px}
+    #host-customer-detail .host-profile-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px}
+    #host-customer-detail .host-profile-metric{padding:13px;background:rgba(255,195,41,.06);border:1px solid rgba(255,195,41,.18);border-radius:9px}
+    #host-customer-detail .host-profile-metric small{display:block;color:#d0b7a2;font-size:12px;margin-bottom:7px}
+    #host-customer-detail .host-profile-metric strong{font-size:clamp(17px,2vw,23px);color:#ffc329;overflow-wrap:anywhere}
+    #host-customer-detail .host-profile-lists{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:16px;margin:16px 0}
+    #host-customer-detail .host-profile-list{min-width:0}
+    #host-customer-detail .host-profile-line{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.11)}
+    #host-customer-detail .host-profile-line small{display:block;color:#b9aaa0;margin-top:4px}
+    #host-customer-detail .host-profile-line strong{text-align:right;flex-shrink:0}
+    #host-customer-detail .host-profile-note{font-size:12px;color:#b8a99c;line-height:1.5;margin:12px 0 0}
+    #host-customer-detail .host-profile-last{margin:8px 0;color:#e6d6c7;font-size:13px}
   `;
   document.head.append(style);
   const message = x => { $('host-admin-feedback').textContent = String(x||''); };
@@ -246,6 +260,12 @@ if (panelHost && tabs && !$('points-panel')) {
     const c=clients.find(x=>x.id===selectedId);
     const target=$('host-customer-detail');
     if(!c) {target.innerHTML='';return;}
+    // Las estadísticas se calculan en Supabase solo con pedidos enlazados por celular.
+    // No vinculamos compras por coincidencias de nombre para evitar atribuciones erróneas.
+    const stats=profiles.find(p=>p.customer_id===c.id) || {};
+    const favoriteProducts=Array.isArray(stats.favorites)?stats.favorites:[];
+    const recentOrders=Array.isArray(stats.recent_orders)?stats.recent_orders:[];
+    const statusLabel={confirmado:'Confirmado',preparando:'Preparando',entregado:'Entregado'};
     const history=[
       ...purchases.filter(x=>x.customer_id===c.id).map(x=>({created_at:x.credited_at,reason:'Compra confirmada',delta:x.points})),
       ...adjustments.filter(x=>x.customer_id===c.id).map(x=>({created_at:x.created_at,reason:x.reason,delta:x.delta})),
@@ -266,7 +286,37 @@ if (panelHost && tabs && !$('points-panel')) {
           href="https://wa.me/${encodeURIComponent(c.phone.replace(/\D/g,''))}">WhatsApp</a>
       </div>
       <p id="host-private-code" style="font-weight:bold"></p>
-      <h3>Historial</h3>
+      <section class="host-profile-overview" aria-label="Estadísticas de compras del cliente">
+        <h4>📊 Perfil completo · Compras</h4>
+        <div class="host-profile-metrics">
+          <div class="host-profile-metric"><small>🛍️ Pedidos entregados</small><strong>${fmt(stats.orders_delivered)}</strong></div>
+          <div class="host-profile-metric"><small>💰 Total gastado</small><strong>$ ${fmt(stats.total_spent)}</strong></div>
+          <div class="host-profile-metric"><small>🧾 Ticket promedio</small><strong>$ ${fmt(stats.average_ticket)}</strong></div>
+          <div class="host-profile-metric"><small>⏳ Pedidos en proceso</small><strong>${fmt(stats.orders_in_progress)}</strong></div>
+        </div>
+        <p class="host-profile-last">📅 Última compra entregada: <strong>${stats.last_purchase?date(stats.last_purchase):'Todavía no tiene compras entregadas vinculadas'}</strong></p>
+        <p class="host-profile-last">👤 Fecha de registro: <strong>${date(c.created_at)}</strong></p>
+        <div class="host-profile-lists">
+          <div class="host-profile-list">
+            <h4>🍗 Sus 3 productos favoritos</h4>
+            ${favoriteProducts.length?favoriteProducts.map((item,i)=>`
+              <div class="host-profile-line"><span>${i+1}. ${h(item.name)}</span><strong>${fmt(item.quantity)} unid.</strong></div>
+            `).join(''):'<p class="muted">Todavía no hay productos comprados para mostrar.</p>'}
+          </div>
+          <div class="host-profile-list">
+            <h4>🛒 Últimos 5 pedidos registrados</h4>
+            ${recentOrders.length?recentOrders.map(o=>`
+              <div class="host-profile-line">
+                <span><strong>#${h(String(o.id||'').slice(0,8).toUpperCase())}</strong>
+                  <small>${date(o.created_at)} · ${h(statusLabel[o.status]||o.status||'Sin estado')}</small></span>
+                <strong>$ ${fmt(o.total)}</strong>
+              </div>
+            `).join(''):'<p class="muted">Sin pedidos confirmados ni entregados vinculados.</p>'}
+          </div>
+        </div>
+        <p class="host-profile-note">Las estadísticas corresponden a pedidos asociados al celular de esta cuenta. El total gastado, el ticket promedio y los favoritos solo incluyen pedidos entregados; no incluyen cancelaciones, pedidos iniciados por WhatsApp ni premios gratuitos. Los pedidos antiguos sin celular vinculado no pueden sumarse automáticamente.</p>
+      </section>
+      <h3>Historial de puntos</h3>
       <p id="host-history-page-info" class="muted"></p>
       <div id="host-client-history-list"></div>
       <nav id="host-history-pagination" aria-label="Páginas del historial de movimientos"></nav>
@@ -429,12 +479,14 @@ if (panelHost && tabs && !$('points-panel')) {
     message('Cargando...');
     try{
       await authorize();
-      [clients,purchases,adjustments,redemptions]=await Promise.all([
+      [clients,purchases,adjustments,redemptions,profiles]=await Promise.all([
         fetchAll('host_customers_admin_safe','id,name,phone,created_at,access_approved,has_code','created_at'),
         fetchAll('host_points','order_id,customer_id,points,credited_at','credited_at'),
         fetchAll('host_point_adjustments','id,customer_id,delta,reason,created_at','created_at'),
-        fetchAll('host_redemptions','id,customer_id,points_cost,reward_name,status,created_at','created_at')
+        fetchAll('host_redemptions','id,customer_id,points_cost,reward_name,status,created_at','created_at'),
+        call('host_rewards_admin_customer_profiles',{})
       ]);
+      if(!Array.isArray(profiles))throw Error('No se pudo obtener el perfil de los clientes.');
       render();message('');
     }catch(e){message('Error: '+e.message);}
   }
@@ -444,7 +496,7 @@ if (panelHost && tabs && !$('points-panel')) {
   tab.onclick=()=>{
     clearTemporaryCode();
     tabs.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b===tab));
-    for(const x of ['categories','products','options','orders','canjes','orden-todos']) $(x+'-panel')?.classList.add('hidden');
+    for(const x of ['categories','products','options','orders','canjes','orden-todos','descuentos']) $(x+'-panel')?.classList.add('hidden');
     panel.classList.remove('hidden');reload();
   };
   $('host-search').oninput=()=>{page=1;render();};
