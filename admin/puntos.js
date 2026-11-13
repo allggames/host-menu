@@ -7,7 +7,9 @@ const $ = id => document.getElementById(id);
 let clients = [], purchases = [], adjustments = [], redemptions = [], selectedId = null;
 let temporaryCodeTimer = null;
 let page = 1;
+let historyPage = 1;
 const PAGE_SIZE = 10;
+const HISTORY_PAGE_SIZE = 10;
 const fmt = n => Number(n||0).toLocaleString('es-AR');
 const date = v => v ? new Date(v).toLocaleDateString('es-AR') : '-';
 
@@ -20,6 +22,10 @@ if (panelHost && tabs && !$('points-panel')) {
   panel.innerHTML=`<h2>⭐ Clientes y puntos</h2>
     <p class="muted">Buscá clientes, restablecé sus códigos y registrá ajustes de puntos.</p>
     <div id="host-points-summary" style="margin:12px 0;font-weight:bold"></div>
+    <div id="host-pending-alert" class="host-pending-alert" role="status" aria-live="polite" hidden>
+      <span id="host-pending-alert-text"></span>
+      <button type="button" id="host-pending-show" class="secondary">Ver pendientes</button>
+    </div>
     <div class="row" style="gap:10px;margin:16px 0;flex-wrap:wrap">
       <input id="host-search" class="grow" type="search" placeholder="Buscar por nombre o celular" autocomplete="off">
       <button type="button" class="secondary" id="host-refresh">Actualizar</button>
@@ -56,8 +62,17 @@ if (panelHost && tabs && !$('points-panel')) {
     <p id="host-admin-feedback" role="status" aria-live="polite"></p>
     <!-- FICHA ARRIBA DEL LISTADO, COMO SE SOLICITÓ -->
     <div id="host-customer-detail"></div>
-    <div class="row host-client-list-heading" style="align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+    <div class="row host-client-list-heading" style="align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
       <h3>Listado de clientes</h3>
+      <label class="host-client-order-label">Ordenar por puntos
+        <select id="host-sort-clients" aria-label="Ordenar clientes por puntos">
+          <option value="desc">Mayor a menor</option>
+          <option value="asc">Menor a mayor</option>
+        </select>
+      </label>
+      <label class="host-pending-only-label">
+        <input id="host-only-pending" type="checkbox"> Solo pendientes de aprobación
+      </label>
       <span class="muted" id="host-page-info"></span>
     </div>
     <div id="host-customers-list"></div>
@@ -67,6 +82,23 @@ if (panelHost && tabs && !$('points-panel')) {
   style.textContent=`
     #host-customers-list .host-client{display:flex;align-items:center;justify-content:space-between;
       flex-wrap:wrap;gap:10px;border-bottom:1px solid #666;padding:12px 0}
+    #host-pending-alert[hidden]{display:none!important}
+    #host-pending-alert{display:flex;align-items:center;justify-content:space-between;
+      gap:12px;flex-wrap:wrap;margin:12px 0;padding:12px 14px;
+      background:rgba(255,195,41,.09);border:1px solid rgba(255,195,41,.65);
+      border-radius:10px;color:#ffc329;font-weight:800}
+    #host-pending-alert button{white-space:nowrap}
+    #host-customers-list .host-pending-label,
+    #host-customer-detail .host-pending-label{display:inline-flex;align-items:center;
+      border-radius:7px;border:1px solid rgba(255,195,41,.7);
+      padding:4px 8px;color:#ffc329;background:rgba(255,195,41,.1);
+      font-size:12px;font-weight:800;line-height:1.2;margin-top:5px}
+    #host-customer-detail .host-pending-detail{padding:10px;margin:12px 0;
+      border:1px solid rgba(255,195,41,.55);border-radius:8px;color:#ffc329}
+    .host-client-order-label{display:flex;align-items:center;gap:8px;font-size:13px}
+    .host-client-order-label select{width:auto;min-width:145px}
+    .host-pending-only-label{display:inline-flex;align-items:center;gap:7px;font-size:13px}
+    .host-pending-only-label input{width:auto!important;flex:0 0 auto}
     #host-customer-detail{margin:18px 0;scroll-margin-top:100px}
     #host-customer-detail:empty{display:none}
     #host-customer-detail .host-client-info{border:1px solid #af5724;border-radius:12px;padding:18px;background:rgba(255,100,12,.05)}
@@ -83,6 +115,10 @@ if (panelHost && tabs && !$('points-panel')) {
     #host-customer-pagination{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;margin:16px 0}
     #host-customer-pagination button{min-width:40px}
     #host-customer-pagination button[aria-current=page]{background:#ed171f;color:#fff;border-color:#ed171f}
+    #host-history-pagination{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;margin:15px 0 4px}
+    #host-history-pagination button{min-width:38px}
+    #host-history-pagination button[aria-current=page]{background:#ed171f;color:#fff;border-color:#ed171f}
+    #host-history-page-info{margin-top:6px;font-size:12px}
     #host-page-info{font-size:13px}
     .host-client-list-heading{margin:20px 0 8px}
     #host-customer-detail .host-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
@@ -136,9 +172,22 @@ if (panelHost && tabs && !$('points-panel')) {
     -redemptions.filter(x=>x.customer_id===id && x.status!=='canceled')
       .reduce((s,x)=>s+Number(x.points_cost),0);
   function render() {
+    const pendingCustomers = clients.filter(c => c.has_code && !c.access_approved);
     $('host-points-summary').textContent = `${clients.length} clientes · ${fmt(clients.reduce((s,c)=>s+pointTotal(c.id),0))} puntos`;
+    const alertBox = $('host-pending-alert');
+    alertBox.hidden = pendingCustomers.length === 0;
+    $('host-pending-alert-text').textContent = pendingCustomers.length === 1
+      ? '⚠️ 1 cliente espera aprobación.'
+      : `⚠️ ${pendingCustomers.length} clientes esperan aprobación.`;
     const q=$('host-search').value.trim().toLowerCase();
-    const found=clients.filter(c=>(c.name+' '+c.phone).toLowerCase().includes(q));
+    const onlyPending = $('host-only-pending').checked;
+    const sortDir = $('host-sort-clients').value === 'asc' ? 1 : -1;
+    const found=clients
+      .filter(c=>(c.name+' '+c.phone).toLowerCase().includes(q))
+      .filter(c=>!onlyPending || (c.has_code && !c.access_approved))
+      .sort((a,b)=>sortDir*(pointTotal(a.id)-pointTotal(b.id))
+        || Number(b.has_code && !b.access_approved)-Number(a.has_code && !a.access_approved)
+        || a.name.localeCompare(b.name,'es'));
     const pageCount=Math.max(1,Math.ceil(found.length/PAGE_SIZE));
     page=Math.max(1,Math.min(page,pageCount));
     const start=(page-1)*PAGE_SIZE;
@@ -148,7 +197,11 @@ if (panelHost && tabs && !$('points-panel')) {
       ? `Mostrando ${start+1}–${end} de ${found.length}`
       : '0 clientes';
     $('host-customers-list').innerHTML=visible.map(c=>`
-      <div class="host-client"><div><strong>${h(c.name)}</strong><br><small>${h(c.phone)} ${!c.has_code?'· Sin registro':c.access_approved?'· Cuenta activa':'· Pendiente de aprobación'}</small></div>
+      <div class="host-client"><div>
+        <strong>${h(c.name)}</strong><br>
+        <small>${h(c.phone)} ${!c.has_code?'· Sin registro':c.access_approved?'· Cuenta activa':''}</small>
+        ${c.has_code && !c.access_approved ? '<div class="host-pending-label">⚠️ Pendiente de aprobación</div>' : ''}
+      </div>
       <div class="actions"><strong>${fmt(pointTotal(c.id))} pts</strong>
       <button type="button" class="secondary" data-client="${h(c.id)}">Administrar</button></div></div>
     `).join('')||'<p class="muted">No se encontraron clientes.</p>';
@@ -156,6 +209,7 @@ if (panelHost && tabs && !$('points-panel')) {
       b.onclick=()=>{
         clearTemporaryCode();
         selectedId=b.dataset.client;
+        historyPage=1;
         renderDetail();
         $('host-customer-detail').scrollIntoView({behavior:'smooth',block:'start'});
       };
@@ -200,7 +254,9 @@ if (panelHost && tabs && !$('points-panel')) {
     ].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
     target.innerHTML=`<div class="host-client-info">
       <div class="row"><div class="grow"><h3>${h(c.name)}</h3><p>${h(c.phone)}</p>
-      <h3>${fmt(pointTotal(c.id))} puntos</h3></div>
+      <h3>${fmt(pointTotal(c.id))} puntos</h3>
+      ${c.has_code && !c.access_approved ? '<div class="host-pending-detail">⚠️ Cuenta pendiente de aprobación. Verificá el celular antes de aprobar.</div>' : ''}
+      </div>
       <button type="button" id="host-close-detail" class="secondary">Cerrar</button></div>
       <div class="host-actions">
         ${!c.access_approved && c.has_code ? '<button type="button" id="host-approve">✅ Aprobar registro</button>' : ''}
@@ -211,10 +267,59 @@ if (panelHost && tabs && !$('points-panel')) {
       </div>
       <p id="host-private-code" style="font-weight:bold"></p>
       <h3>Historial</h3>
-      ${history.map(x=>`<div class="host-history"><span>${h(x.reason)} · ${date(x.created_at)}</span>
-        <strong>${Number(x.delta)>0?'+':''}${fmt(x.delta)} pts</strong></div>`).join('')||'<p class="muted">Sin movimientos.</p>'}
+      <p id="host-history-page-info" class="muted"></p>
+      <div id="host-client-history-list"></div>
+      <nav id="host-history-pagination" aria-label="Páginas del historial de movimientos"></nav>
       </div>`;
-    $('host-close-detail').onclick=()=>{clearTemporaryCode();selectedId=null;renderDetail();};
+
+    // Mostrar los movimientos más recientes primero; 10 por página.
+    // Esta paginación es independiente de las páginas del listado de clientes.
+    function renderHistoryPage() {
+      const pageCount = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
+      historyPage = Math.max(1, Math.min(historyPage, pageCount));
+      const start = (historyPage - 1) * HISTORY_PAGE_SIZE;
+      const current = history.slice(start, start + HISTORY_PAGE_SIZE);
+      const list = target.querySelector('#host-client-history-list');
+      const pagination = target.querySelector('#host-history-pagination');
+      const info = target.querySelector('#host-history-page-info');
+      if (!list || !pagination || !info) return;
+
+      list.innerHTML = current.map(x => `<div class="host-history">
+        <span>${h(x.reason)} · ${date(x.created_at)}</span>
+        <strong>${Number(x.delta)>0?'+':''}${fmt(x.delta)} pts</strong>
+      </div>`).join('') || '<p class="muted">Sin movimientos.</p>';
+      info.textContent = history.length
+        ? `Mostrando ${start + 1}–${Math.min(start + HISTORY_PAGE_SIZE, history.length)} de ${history.length} movimientos · Página ${historyPage} de ${pageCount}`
+        : 'Sin movimientos';
+
+      pagination.replaceChildren();
+      if (pageCount < 2) return;
+      const button = (label, targetPage, disabled = false, currentPage = false) => {
+        const el = document.createElement('button');
+        el.type = 'button';
+        el.className = 'secondary';
+        el.textContent = label;
+        el.disabled = disabled;
+        if (currentPage) el.setAttribute('aria-current', 'page');
+        el.onclick = () => {
+          historyPage = targetPage;
+          renderHistoryPage();
+          target.querySelector('#host-history-page-info')?.scrollIntoView({
+            behavior: 'smooth', block: 'nearest'
+          });
+        };
+        pagination.append(el);
+      };
+      button('← Anterior', Math.max(1, historyPage - 1), historyPage === 1);
+      for (let p = 1; p <= pageCount; p++) {
+        if (pageCount > 10 && Math.abs(p - historyPage) > 2 && p !== 1 && p !== pageCount) continue;
+        button(String(p), p, false, p === historyPage);
+      }
+      button('Siguiente →', Math.min(pageCount, historyPage + 1), historyPage === pageCount);
+    }
+    renderHistoryPage();
+
+    $('host-close-detail').onclick=()=>{clearTemporaryCode();selectedId=null;historyPage=1;renderDetail();};
     if ($('host-approve')) $('host-approve').onclick=async()=>{
       if(!confirm('Antes de aprobar, verificá por WhatsApp que el número realmente pertenece a '+c.name+'. ¿Confirmás?'))return;
       try {await call('host_rewards_admin_approve',{p_customer_id:c.id});await reload();message('Cuenta aprobada.');}
@@ -343,5 +448,14 @@ if (panelHost && tabs && !$('points-panel')) {
     panel.classList.remove('hidden');reload();
   };
   $('host-search').oninput=()=>{page=1;render();};
+  $('host-sort-clients').onchange=()=>{page=1;render();};
+  $('host-only-pending').onchange=()=>{page=1;render();};
+  $('host-pending-show').onclick=()=>{
+    $('host-only-pending').checked=true;
+    $('host-search').value='';
+    page=1;
+    render();
+    $('host-customers-list').scrollIntoView({behavior:'smooth',block:'start'});
+  };
   $('host-refresh').onclick=reload;
 }
