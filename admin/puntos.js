@@ -5,13 +5,24 @@ const tabs = panelHost?.querySelector('.tabs');
 const h = v => escapeHTML(String(v ?? ''));
 const $ = id => document.getElementById(id);
 let clients = [], purchases = [], adjustments = [], redemptions = [], profiles = [], selectedId = null;
+let manualPurchases = [], unlinkedOrders = [];
 let temporaryCodeTimer = null;
 let page = 1;
 let historyPage = 1;
+let manualPage = 1;
 const PAGE_SIZE = 10;
 const HISTORY_PAGE_SIZE = 10;
+const MANUAL_PAGE_SIZE = 10;
 const fmt = n => Number(n||0).toLocaleString('es-AR');
-const date = v => v ? new Date(v).toLocaleDateString('es-AR') : '-';
+const date = v => v ? new Date(v).toLocaleDateString('es-AR', {timeZone:'America/Argentina/Buenos_Aires'}) : '-';
+const purchaseDate = v => v ? String(v).slice(0,10).split('-').reverse().join('/') : '-';
+function localDate(v) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone:'America/Argentina/Buenos_Aires', year:'numeric', month:'2-digit', day:'2-digit'
+  }).formatToParts(new Date(v));
+  const obj = Object.fromEntries(parts.map(p=>[p.type,p.value]));
+  return `${obj.year}-${obj.month}-${obj.day}`;
+}
 
 if (panelHost && tabs && !$('points-panel')) {
   const tab = document.createElement('button');
@@ -139,6 +150,17 @@ if (panelHost && tabs && !$('points-panel')) {
     #host-customer-detail .host-profile-line strong{text-align:right;flex-shrink:0}
     #host-customer-detail .host-profile-note{font-size:12px;color:#b8a99c;line-height:1.5;margin:12px 0 0}
     #host-customer-detail .host-profile-last{margin:8px 0;color:#e6d6c7;font-size:13px}
+    #host-customer-detail .host-manual-form{border:1px solid rgba(255,195,41,.55);border-radius:12px;padding:16px;margin:18px 0;background:rgba(255,195,41,.045)}
+    #host-customer-detail .host-manual-form[hidden]{display:none!important}
+    #host-customer-detail .host-manual-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:12px 0}
+    #host-customer-detail .host-manual-grid label{display:grid;gap:6px;font-size:13px}
+    #host-customer-detail .host-manual-grid select,#host-customer-detail .host-manual-grid input{min-width:0;width:100%}
+    #host-customer-detail .host-manual-list .host-manual-row{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;border-bottom:1px solid #554538;padding:10px 0}
+    #host-manual-pagination{display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}
+    #host-manual-pagination button[aria-current=page]{background:#ed171f;color:white;border-color:#ed171f}
+    #host-customer-detail .host-manual-help{color:#dbc8b5;font-size:12px;line-height:1.5}
+    #host-customer-detail .host-manual-form h4{color:#ffc329;margin:0}
+    #host-customer-detail .host-manual-list>h4{color:#ffc329;margin:15px 0 8px}
   `;
   document.head.append(style);
   const message = x => { $('host-admin-feedback').textContent = String(x||''); };
@@ -224,7 +246,10 @@ if (panelHost && tabs && !$('points-panel')) {
         clearTemporaryCode();
         selectedId=b.dataset.client;
         historyPage=1;
+        manualPage=1;
+        manualPurchases=[];
         renderDetail();
+        loadManualForSelected().catch(e=>message('Error cargando las compras manuales: '+e.message));
         $('host-customer-detail').scrollIntoView({behavior:'smooth',block:'start'});
       };
     });
@@ -282,10 +307,49 @@ if (panelHost && tabs && !$('points-panel')) {
         ${!c.access_approved && c.has_code ? '<button type="button" id="host-approve">✅ Aprobar registro</button>' : ''}
         <button type="button" id="host-reset-code" class="secondary">🔑 Cambiar código</button>
         <button type="button" id="host-adjust-points">+ / − Puntos</button>
+        <button type="button" id="host-manual-open" class="secondary">🧾 Registrar compra manual</button>
         <a id="host-contact-client" class="button yellow" target="_blank" rel="noopener"
           href="https://wa.me/${encodeURIComponent(c.phone.replace(/\D/g,''))}">WhatsApp</a>
       </div>
       <p id="host-private-code" style="font-weight:bold"></p>
+      <form id="host-manual-purchase-form" class="host-manual-form" hidden>
+        <h4>🧾 Registrar compra sin productos</h4>
+        <p class="host-manual-help">Esto suma una compra entregada a las estadísticas del perfil, <strong>pero no vuelve a sumar puntos</strong>. Podés vincular un pedido que quedó sin celular o registrar una compra del local.</p>
+        <div class="host-manual-grid">
+          <label>Origen de la compra
+            <select name="source_order_id" id="host-manual-source">
+              <option value="">Venta manual / local (sin pedido en el sistema)</option>
+              ${unlinkedOrders
+                .map(o=>({...o,sameName:String(o.customer_name||'').trim().toLocaleLowerCase('es')===String(c.name||'').trim().toLocaleLowerCase('es')}))
+                .sort((a,b)=>Number(b.sameName)-Number(a.sameName)||new Date(b.created_at)-new Date(a.created_at))
+                .map(o=>`<option value="${h(o.id)}">${o.sameName?'★ Coincide el nombre · ':''}${h(o.customer_name)} · #${h(o.id.slice(0,8).toUpperCase())} · ${date(o.created_at)} · $ ${fmt(o.total)}</option>`).join('')}
+            </select>
+          </label>
+          <label>Importe de la compra ($)
+            <input name="amount" id="host-manual-amount" type="number" min="0.01" max="100000000" step="0.01" required placeholder="Ej.: 24500">
+          </label>
+          <label>Fecha de la compra
+            <input name="purchase_date" id="host-manual-date" type="date" required min="2020-01-01" max="${localDate(new Date())}">
+          </label>
+          <label>Asociar a ajuste manual de puntos (opcional)
+            <select name="source_adjustment_id" id="host-manual-adjustment">
+              <option value="">No asociar a un ajuste</option>
+              ${adjustments.filter(a=>a.customer_id===c.id && Number(a.delta)>0
+                && /pedido|compra/i.test(String(a.reason||''))
+                && !manualPurchases.some(m=>m.source_adjustment_id===a.id))
+                .map(a=>`<option value="${h(a.id)}">${h(a.reason)} · +${fmt(a.delta)} pts · ${date(a.created_at)}</option>`).join('')}
+            </select>
+          </label>
+          <label>Observación (opcional, sin productos)
+            <input name="note" maxlength="250" placeholder="Ej.: Compra en mostrador">
+          </label>
+        </div>
+        <p class="host-manual-help" id="host-manual-source-note">Si el pedido ya está registrado en HOST, elegilo arriba y verificá que pertenezca al cliente. Se tomarán su fecha y su importe originales.</p>
+        <div class="row" style="gap:10px;flex-wrap:wrap">
+          <button type="submit" id="host-manual-save">Guardar compra entregada</button>
+          <button type="button" class="secondary" id="host-manual-cancel">Cancelar</button>
+        </div>
+      </form>
       <section class="host-profile-overview" aria-label="Estadísticas de compras del cliente">
         <h4>📊 Perfil completo · Compras</h4>
         <div class="host-profile-metrics">
@@ -293,6 +357,8 @@ if (panelHost && tabs && !$('points-panel')) {
           <div class="host-profile-metric"><small>💰 Total gastado</small><strong>$ ${fmt(stats.total_spent)}</strong></div>
           <div class="host-profile-metric"><small>🧾 Ticket promedio</small><strong>$ ${fmt(stats.average_ticket)}</strong></div>
           <div class="host-profile-metric"><small>⏳ Pedidos en proceso</small><strong>${fmt(stats.orders_in_progress)}</strong></div>
+          <div class="host-profile-metric"><small>🧾 Compras manuales incluidas</small><strong>${fmt(stats.manual_purchases_count)}</strong></div>
+          <div class="host-profile-metric"><small>🏪 Total de esas compras</small><strong>$ ${fmt(stats.manual_spent)}</strong></div>
         </div>
         <p class="host-profile-last">📅 Última compra entregada: <strong>${stats.last_purchase?date(stats.last_purchase):'Todavía no tiene compras entregadas vinculadas'}</strong></p>
         <p class="host-profile-last">👤 Fecha de registro: <strong>${date(c.created_at)}</strong></p>
@@ -308,13 +374,19 @@ if (panelHost && tabs && !$('points-panel')) {
             ${recentOrders.length?recentOrders.map(o=>`
               <div class="host-profile-line">
                 <span><strong>#${h(String(o.id||'').slice(0,8).toUpperCase())}</strong>
-                  <small>${date(o.created_at)} · ${h(statusLabel[o.status]||o.status||'Sin estado')}</small></span>
+                  <small>${date(o.created_at)} · ${o.manual?'Compra manual · Entregado':h(statusLabel[o.status]||o.status||'Sin estado')}</small></span>
                 <strong>$ ${fmt(o.total)}</strong>
               </div>
             `).join(''):'<p class="muted">Sin pedidos confirmados ni entregados vinculados.</p>'}
           </div>
         </div>
-        <p class="host-profile-note">Las estadísticas corresponden a pedidos asociados al celular de esta cuenta. El total gastado, el ticket promedio y los favoritos solo incluyen pedidos entregados; no incluyen cancelaciones, pedidos iniciados por WhatsApp ni premios gratuitos. Los pedidos antiguos sin celular vinculado no pueden sumarse automáticamente.</p>
+        <p class="host-profile-note">Los pedidos entregados, el total gastado, el ticket promedio y la última compra incluyen los pedidos del menú vinculados por celular y las compras manuales que registres abajo. Los productos favoritos se calculan solo con pedidos del menú. Los ajustes de puntos no crean compras automáticamente. No se cuentan cancelaciones ni pedidos sin confirmar.</p>
+      </section>
+      <section class="host-manual-list" aria-label="Compras manuales del cliente">
+        <h4>🧾 Compras manuales registradas</h4>
+        <p id="host-manual-page-info" class="muted"></p>
+        <div id="host-manual-list"></div>
+        <nav id="host-manual-pagination" aria-label="Páginas de compras manuales"></nav>
       </section>
       <h3>Historial de puntos</h3>
       <p id="host-history-page-info" class="muted"></p>
@@ -368,6 +440,95 @@ if (panelHost && tabs && !$('points-panel')) {
       button('Siguiente →', Math.min(pageCount, historyPage + 1), historyPage === pageCount);
     }
     renderHistoryPage();
+
+    function renderManualPage(){
+      const rows = manualPurchases;
+      const totalPages=Math.max(1,Math.ceil(rows.length/MANUAL_PAGE_SIZE));
+      manualPage=Math.min(Math.max(1,manualPage),totalPages);
+      const start=(manualPage-1)*MANUAL_PAGE_SIZE;
+      const list=$('host-manual-list'), pagination=$('host-manual-pagination');
+      const info=$('host-manual-page-info');
+      if(!list||!pagination||!info)return;
+      const entries=rows.slice(start,start+MANUAL_PAGE_SIZE);
+      info.textContent=rows.length?`Mostrando ${start+1}–${Math.min(start+MANUAL_PAGE_SIZE,rows.length)} de ${rows.length}`:'Todavía no se registraron compras manuales para esta cuenta.';
+      list.innerHTML=entries.map(m=>`<div class="host-manual-row">
+        <div><strong>${m.source_order_id?'Pedido asociado':'Venta manual'} · $ ${fmt(m.amount)}</strong><br>
+          <small>${purchaseDate(m.purchase_date)}${m.source_order_id?' · #'+h(m.source_order_id.slice(0,8).toUpperCase()):''}${m.source_adjustment_id?' · Ajuste de puntos asociado':''}</small>
+          ${m.counts_in_profile===false?'<br><small style="color:#ffc329">⚠️ No se cuenta: revisá el estado o la vinculación del pedido.</small>':''}
+          ${m.note?`<br><small>${h(m.note)}</small>`:''}
+        </div>
+        <button class="secondary" type="button" data-void-manual="${h(m.id)}">Anular registro</button>
+      </div>`).join('');
+      list.querySelectorAll('[data-void-manual]').forEach(b=>{
+        b.onclick=async()=>{
+          const m=manualPurchases.find(x=>x.id===b.dataset.voidManual);
+          if(!m||!confirm(`¿Anular este registro de $ ${fmt(m.amount)}? Se descontará de las estadísticas, pero los puntos NO se modificarán.`))return;
+          b.disabled=true;
+          try{
+            await call('host_rewards_admin_void_manual_purchase',{p_purchase_id:m.id});
+            await reload();
+            message('Registro de compra anulado. Los puntos permanecen iguales.');
+          }catch(e){message('Error al anular la compra: '+e.message);b.disabled=false;}
+        };
+      });
+      pagination.replaceChildren();
+      if(totalPages<=1)return;
+      const button=(label,next,disabled=false)=>{
+        const b=document.createElement('button');b.type='button';b.className='secondary';b.textContent=label;
+        b.disabled=disabled;if(next===manualPage&&label===String(next))b.setAttribute('aria-current','page');
+        b.onclick=()=>{manualPage=next;renderManualPage();$('host-manual-page-info')?.scrollIntoView({behavior:'smooth',block:'nearest'});};
+        pagination.append(b);
+      };
+      button('← Anterior',Math.max(1,manualPage-1),manualPage===1);
+      for(let n=1;n<=totalPages;n++){
+        if(totalPages>10&&Math.abs(n-manualPage)>2&&n!==1&&n!==totalPages)continue;
+        button(String(n),n);
+      }
+      button('Siguiente →',Math.min(totalPages,manualPage+1),manualPage===totalPages);
+    }
+    renderManualPage();
+
+    const manualForm=$('host-manual-purchase-form');
+    $('host-manual-open').onclick=()=>{
+      manualForm.reset();manualForm.hidden=false;
+      $('host-manual-date').value=localDate(new Date());
+      syncManualSource();manualForm.scrollIntoView({behavior:'smooth',block:'nearest'});
+    };
+    $('host-manual-cancel').onclick=()=>{manualForm.hidden=true;manualForm.reset();};
+    $('host-manual-source').onchange=syncManualSource;
+    function syncManualSource(){
+      const id=$('host-manual-source').value;
+      const o=unlinkedOrders.find(x=>x.id===id);
+      const amount=$('host-manual-amount'),when=$('host-manual-date');
+      if(o){amount.value=String(o.total);when.value=localDate(o.created_at);}
+      else{amount.value='';when.value=localDate(new Date());}
+      amount.readOnly=Boolean(o);when.readOnly=Boolean(o);
+      $('host-manual-source-note').textContent=o
+        ? 'Verificá que este pedido entregado sea realmente de '+c.name+'. Usaremos el importe y la fecha registrados en HOST, sin tocar puntos ni productos.'
+        : 'Ingresá el monto real y la fecha. Podés asociar un ajuste de puntos existente sin volver a sumarlos.';
+    }
+    manualForm.onsubmit=async e=>{
+      e.preventDefault();
+      const f=new FormData(manualForm);
+      const orderId=String(f.get('source_order_id')||'')||null;
+      const adjId=String(f.get('source_adjustment_id')||'')||null;
+      const amount=Number(f.get('amount'));
+      const when=String(f.get('purchase_date')||'');
+      const note=String(f.get('note')||'').trim();
+      if(!Number.isFinite(amount)||amount<=0||amount>100000000){return message('Ingresá un importe válido para la compra.');}
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(when)||when>localDate(new Date())){return message('Ingresá una fecha válida, no futura.');}
+      if(!confirm(`¿Registrar compra entregada por $ ${fmt(amount)} para ${c.name}? Esto actualizará el perfil pero NO acreditará puntos nuevos.${orderId?' Confirmá que el pedido seleccionado realmente corresponde a este cliente.':''}`))return;
+      const btn=$('host-manual-save');btn.disabled=true;
+      try{
+        await call('host_rewards_admin_add_manual_purchase',{
+          p_customer_id:c.id,p_amount:amount,p_purchase_date:when,
+          p_source_order_id:orderId,p_source_adjustment_id:adjId,p_note:note
+        });
+        manualPage=1;
+        await reload();
+        message('Compra incluida en las estadísticas. Los puntos no se modificaron.');
+      }catch(err){message('No se pudo registrar la compra: '+err.message);btn.disabled=false;}
+    };
 
     $('host-close-detail').onclick=()=>{clearTemporaryCode();selectedId=null;historyPage=1;renderDetail();};
     if ($('host-approve')) $('host-approve').onclick=async()=>{
@@ -475,6 +636,20 @@ if (panelHost && tabs && !$('points-panel')) {
     }
     return out;
   }
+  async function loadManualForSelected(){
+    const forId=selectedId;
+    if(!forId){manualPurchases=[];return;}
+    const data=await call('host_rewards_admin_list_manual_purchases',{p_customer_id:forId});
+    if(selectedId!==forId)return;
+    if(!Array.isArray(data))throw Error('Respuesta inválida al cargar compras manuales.');
+    manualPurchases=data;
+    renderDetail();
+  }
+  async function loadUnlinkedDeliveredOrders(){
+    const rows=await call('host_rewards_admin_unlinked_orders',{});
+    if(!Array.isArray(rows))throw Error('No se pudieron cargar los pedidos sin vincular.');
+    return rows;
+  }
   async function reload(){
     message('Cargando...');
     try{
@@ -487,6 +662,12 @@ if (panelHost && tabs && !$('points-panel')) {
         call('host_rewards_admin_customer_profiles',{})
       ]);
       if(!Array.isArray(profiles))throw Error('No se pudo obtener el perfil de los clientes.');
+      unlinkedOrders=await loadUnlinkedDeliveredOrders();
+      if(selectedId){
+        const data=await call('host_rewards_admin_list_manual_purchases',{p_customer_id:selectedId});
+        if(!Array.isArray(data))throw Error('No se pudieron cargar las compras manuales.');
+        manualPurchases=data;
+      }else manualPurchases=[];
       render();message('');
     }catch(e){message('Error: '+e.message);}
   }
