@@ -545,8 +545,8 @@ function chooseOptions(
       </div>
 
       <p class="muted">
-        Personalizá tu pedido.
-        Completá el cupo de cada grupo.
+        Personalizá tu pedido. Las elecciones sin cargo son obligatorias.
+        Los adicionales con precio son opcionales y podés rechazarlos.
       </p>
 
       <form id="choose-form">
@@ -567,11 +567,13 @@ function chooseOptions(
               <legend>
                 <strong>${h(g.name)}</strong>
                 <small>
-                  Elegí ${max} unidades
+                  ${options.some(v => Number(v.extra_price) === 0)
+                    ? `Elegí ${max} unidades sin cargo (obligatorio)`
+                    : 'Extras pagos opcionales · podés no elegir ninguno'}
                 </small>
               </legend>
 
-              ${options.map(v => `
+              ${options.slice().sort((a,b) => Number(Number(a.extra_price) > 0) - Number(Number(b.extra_price) > 0)).map(v => `
                 <div class="host-quantity-choice">
 
                   <div class="host-choice-name">
@@ -580,8 +582,8 @@ function chooseOptions(
                     <small>
                       ${
                         Number(v.extra_price)
-                          ? `(+${money(v.extra_price)} c/u)`
-                          : '(sin cargo)'
+                          ? `(+${money(v.extra_price)} c/u · OPCIONAL)`
+                          : '(sin cargo · obligatorio)'
                       }
                     </small>
                   </div>
@@ -615,6 +617,16 @@ function chooseOptions(
                 </div>
               `).join('')}
 
+              ${options.some(v => Number(v.extra_price) > 0)
+                ? `<div class="host-paid-optional" style="margin:12px 0;padding:12px;border:1px solid #69502e;border-radius:10px;background:rgba(255,195,41,.055)">
+                    <strong>💛 Adicionales pagos opcionales</strong>
+                    <p class="muted" style="margin:6px 0">No tenés obligación de agregarlos.</p>
+                    <button type="button" class="secondary" data-option-decline="${h(g.id)}">
+                      No, gracias, sin extras pagos
+                    </button>
+                    <p class="muted host-paid-status"></p>
+                  </div>`
+                : ''}
               <p class="muted selection-status"></p>
 
             </fieldset>
@@ -643,19 +655,14 @@ function chooseOptions(
 
   // CONTAR UNIDADES ELEGIDAS
 
-  function groupTotal(group) {
+  function groupTotal(group, type) {
+    const paid = type === 'paid';
     return optionValues
-      .filter(
-        v =>
-          String(v.group_id) === String(group.id)
+      .filter(v =>
+        String(v.group_id) === String(group.id) &&
+        (Number(v.extra_price) > 0) === paid
       )
-      .reduce(
-        (sum, v) =>
-          sum + (
-            quantities.get(String(v.id)) || 0
-          ),
-        0
-      );
+      .reduce((sum, v) => sum + (quantities.get(String(v.id)) || 0), 0);
   }
 
   // ACTUALIZAR CUPOS
@@ -665,7 +672,8 @@ function chooseOptions(
 
     for (const group of groups) {
       const max = Number(group.max_select);
-      const total = groupTotal(group);
+      const freeTotal = groupTotal(group, 'free');
+      const paidTotal = groupTotal(group, 'paid');
 
       const fieldset = [
         ...form.querySelectorAll(
@@ -684,6 +692,7 @@ function chooseOptions(
           String(v.group_id) === String(group.id)
       );
 
+      const hasFree = groupValues.some(v => Number(v.extra_price) === 0);
       for (const value of groupValues) {
         const quantity =
           quantities.get(String(value.id)) || 0;
@@ -723,7 +732,7 @@ function chooseOptions(
         }
 
         if (plus) {
-          plus.disabled = total >= max;
+          plus.disabled = (Number(value.extra_price) > 0 ? paidTotal : freeTotal) >= max;
         }
 
         if (minus) {
@@ -735,14 +744,19 @@ function chooseOptions(
         '.selection-status'
       );
 
-      status.textContent = total === max
-        ? `✓ Cupo completo: ${total} de ${max}`
-        : `${total} de ${max} unidades · ` +
-          `Faltan ${max - total}`;
+      status.textContent = !hasFree
+        ? '✓ Sin opciones gratuitas obligatorias.'
+        : freeTotal === max
+          ? `✓ Gratis elegidos: ${freeTotal} de ${max}`
+          : `Gratis obligatorios: ${freeTotal} de ${max} · Faltan ${max - freeTotal}`;
 
-      if (total !== max) {
-        complete = false;
-      }
+      const paidStatus = fieldset.querySelector('.host-paid-status');
+      if (paidStatus) paidStatus.textContent = paidTotal
+        ? `Extras pagos: ${paidTotal} de ${max} posibles`
+        : 'Sin extras pagos seleccionados. Podés continuar así.';
+
+      if (hasFree && freeTotal !== max) complete = false;
+      if (freeTotal > max || paidTotal > max) complete = false;
     }
 
     confirmButton.disabled = !complete;
@@ -753,6 +767,16 @@ function chooseOptions(
   // BOTONES + Y - DE OPCIONALES
 
   form.addEventListener('click', event => {
+    const decline = event.target.closest('[data-option-decline]');
+    if (decline) {
+      const groupId = String(decline.dataset.optionDecline);
+      optionValues
+        .filter(v => String(v.group_id) === groupId && Number(v.extra_price) > 0)
+        .forEach(v => quantities.delete(String(v.id)));
+      updateSelections();
+      return;
+    }
+
     const plus = event.target.closest(
       '[data-option-plus]'
     );
@@ -787,7 +811,7 @@ function chooseOptions(
 
     if (
       plus &&
-      groupTotal(group) <
+      groupTotal(group, Number(value.extra_price) > 0 ? 'paid' : 'free') <
       Number(group.max_select)
     ) {
       quantities.set(
@@ -842,7 +866,7 @@ function chooseOptions(
 
     if (!updateSelections()) {
       alert(
-        'Completá el cupo de cada grupo de opcionales.'
+        'Completá las selecciones gratuitas obligatorias.'
       );
       return;
     }
