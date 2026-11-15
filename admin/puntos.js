@@ -75,10 +75,11 @@ if (panelHost && tabs && !$('points-panel')) {
     <div id="host-customer-detail"></div>
     <div class="row host-client-list-heading" style="align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
       <h3>Listado de clientes</h3>
-      <label class="host-client-order-label">Ordenar por puntos
-        <select id="host-sort-clients" aria-label="Ordenar clientes por puntos">
-          <option value="desc">Mayor a menor</option>
-          <option value="asc">Menor a mayor</option>
+      <label class="host-client-order-label">Ordenar clientes
+        <select id="host-sort-clients" aria-label="Ordenar clientes por puntos o fecha de registro">
+          <option value="desc">Mayor a menor (puntos)</option>
+          <option value="asc">Menor a mayor (puntos)</option>
+          <option value="recent">Más reciente a más antiguo</option>
         </select>
       </label>
       <label class="host-pending-only-label">
@@ -217,11 +218,14 @@ if (panelHost && tabs && !$('points-panel')) {
       : `⚠️ ${pendingCustomers.length} clientes esperan aprobación.`;
     const q=$('host-search').value.trim().toLowerCase();
     const onlyPending = $('host-only-pending').checked;
-    const sortDir = $('host-sort-clients').value === 'asc' ? 1 : -1;
+    const sortMode = $('host-sort-clients').value;
+    const registeredAt = c => new Date(c.created_at).getTime() || 0;
     const found=clients
       .filter(c=>(c.name+' '+c.phone).toLowerCase().includes(q))
       .filter(c=>!onlyPending || (c.has_code && !c.access_approved))
-      .sort((a,b)=>sortDir*(pointTotal(a.id)-pointTotal(b.id))
+      .sort((a,b)=>(sortMode==='recent'
+          ? registeredAt(b)-registeredAt(a)
+          : (sortMode==='asc'?1:-1)*(pointTotal(a.id)-pointTotal(b.id)))
         || Number(b.has_code && !b.access_approved)-Number(a.has_code && !a.access_approved)
         || a.name.localeCompare(b.name,'es'));
     const pageCount=Math.max(1,Math.ceil(found.length/PAGE_SIZE));
