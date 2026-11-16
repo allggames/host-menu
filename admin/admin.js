@@ -22,10 +22,18 @@ let editingProductId = null;
 
 // INICIO Y AUTENTICACIÓN
 
+function notifyAdminReady() {
+  window.dispatchEvent(new Event('host-admin-ready'));
+}
+
 if (!configured) {
   $('#setup').classList.remove('hidden');
+  notifyAdminReady();
 } else {
-  init();
+  init().catch(error => {
+    console.error('No se pudo iniciar HOST Admin:', error);
+    $('#login-message').textContent = 'No se pudo cargar el administrador. Actualizá la página.';
+  }).finally(notifyAdminReady);
 }
 
 async function init() {
