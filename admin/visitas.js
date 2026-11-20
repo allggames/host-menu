@@ -5,9 +5,29 @@ const dashboard = document.getElementById('dashboard');
 const tabs = dashboard?.querySelector('.tabs');
 const h = value => escapeHTML(String(value ?? ''));
 const number = n => (Number(n) || 0).toLocaleString('es-AR');
-const displayDay = day => new Date(day + 'T12:00:00Z').toLocaleDateString(
+const dayFormatter = new Intl.DateTimeFormat(
   'es-AR', { timeZone:'UTC', weekday:'short', day:'numeric', month:'short' }
 );
+const argentinaDay = offset => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone:'America/Argentina/Buenos_Aires', year:'numeric', month:'2-digit', day:'2-digit'
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return new Date(Date.UTC(+values.year, +values.month - 1, +values.day - offset, 12));
+};
+const displayDay = (row, index) => {
+  // La función SQL puede devolver el campo como day, date o visit_date.
+  const raw = row.date ?? row.day ?? row.visit_date ?? row.visit_day ?? row.fecha ?? null;
+  let parsed = null;
+  if (raw != null) {
+    const value = String(raw).trim();
+    const iso = value.match(/^(\d{4}-\d{2}-\d{2})/);
+    parsed = new Date(iso ? iso[1] + 'T12:00:00Z' : value);
+  }
+  // El RPC ya devuelve los días en orden descendente: índice 0 = hoy.
+  if (!parsed || Number.isNaN(parsed.getTime())) parsed = argentinaDay(index);
+  return dayFormatter.format(parsed);
+};
 let days = 30;
 let rows = [];
 let busy = false;
@@ -99,12 +119,12 @@ if (dashboard && tabs && !document.getElementById('host-visitas-panel')) {
 
     const maximum = Math.max(1,...rows.map(row=>Number(row.visits)||0));
     const area = document.getElementById('host-visitas-bars');
-    area.innerHTML = rows.map(row=>{
+    area.innerHTML = rows.map((row,index)=>{
       const views=Number(row.visits)||0;
       const visitors=Number(row.visitors)||0;
       const percent=Math.max(0,Math.min(100,views/maximum*100));
       return `<div class="host-visitas-bar-row">
-        <div class="host-visitas-day">${h(displayDay(row.date))}</div>
+        <div class="host-visitas-day">${h(displayDay(row,index))}</div>
         <div class="host-visitas-track" aria-hidden="true">
           <div class="host-visitas-fill" style="width:${percent.toFixed(1)}%"></div>
         </div>
