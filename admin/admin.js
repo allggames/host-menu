@@ -1,5 +1,12 @@
 import { requireHostAdminMfa } from './admin-mfa.js';
 import {
+  fetchOrderDiscounts,
+  renderOrderAmount,
+  renderOrderDiscountActions,
+  renderOrderDiscountEditor,
+  bindOrderDiscountControls
+} from './order-discounts.js';
+import {
   db,
   money,
   escapeHTML,
@@ -14,6 +21,7 @@ const $ = s => document.querySelector(s);
 let cats = [];
 let products = [];
 let orders = [];
+let orderDiscounts = new Map();
 let groups = [];
 let values = [];
 let links = [];
@@ -848,16 +856,20 @@ async function loadOrders() {
     return loadOrders();
   }
 
-  orders = data || [];
+  const nextOrders = data || [];
+  const nextDiscounts = await fetchOrderDiscounts(nextOrders);
+  if (pageMarker !== orderLoadRequest) return;
+  orders = nextOrders;
+  orderDiscounts = nextDiscounts;
   feedback.textContent = total === 1
     ? '1 pedido encontrado.'
     : `${total} pedidos encontrados.`;
 
   $('#order-list').innerHTML = orders.map(o => `
     <div class="item-row">
-      <div>
+      <div class="host-order-info">
         <strong>${escapeHTML(o.customer_name)}</strong>
-        · ${money(o.total)}
+        · ${renderOrderAmount(o, orderDiscounts.get(o.id))}
         <br>
         <small>
           ${new Date(o.created_at).toLocaleTimeString('es-AR', {
@@ -877,6 +889,7 @@ async function loadOrders() {
         <br>
         <small>${escapeHTML(o.notes || '')}</small>
       </div>
+      <div class="host-order-actions">
       <select style="width:auto" data-status="${escapeHTML(o.id)}">
         ${[
           ['iniciado_whatsapp', 'WhatsApp iniciado'],
@@ -890,6 +903,9 @@ async function loadOrders() {
           </option>
         `).join('')}
       </select>
+        ${renderOrderDiscountActions(o, orderDiscounts.get(o.id))}
+      </div>
+      ${renderOrderDiscountEditor(o, orderDiscounts.get(o.id))}
     </div>
   `).join('') || '<p class="muted">No hay pedidos para esta fecha.</p>';
 
@@ -908,9 +924,12 @@ async function loadOrders() {
       } else {
         const current = orders.find(o => o.id === s.dataset.status);
         if (current) current.status = s.value;
+        loadOrders().catch(alertError);
       }
     };
   });
+
+  bindOrderDiscountControls(orders, orderDiscounts, () => loadOrders());
 
   // Paginación interna del día para no dejar pedidos antiguos afuera.
   let pagination = $('#host-order-pagination');
