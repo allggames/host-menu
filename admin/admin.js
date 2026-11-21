@@ -363,59 +363,122 @@ function renderProductGroups(productId) {
 
 // LISTADO DE PRODUCTOS
 
+// Buscador local: usa los productos ya cargados desde Supabase.
+const expandedProductCategories = new Set();
+const normalizeProductSearch = value => String(value ?? '')
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLocaleLowerCase('es-AR').trim();
+
+$('#host-product-search').addEventListener('input', renderProducts);
+$('#host-product-category-filter').addEventListener('change', renderProducts);
+$('#host-product-clear-filters').onclick = () => {
+  $('#host-product-search').value = '';
+  $('#host-product-category-filter').value = '';
+  expandedProductCategories.clear();
+  renderProducts();
+  $('#host-product-search').focus();
+};
+$('#host-product-new').onclick = () => {
+  clearProductForm();
+  $('#product-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#product-form').elements.name.focus({ preventScroll: true });
+};
+
 function renderProducts() {
-  $('#product-list').innerHTML = cats.map(c => `
-    <h3>${escapeHTML(c.name)}</h3>
+  const searchInput = $('#host-product-search');
+  const filterSelect = $('#host-product-category-filter');
+  const needle = normalizeProductSearch(searchInput.value);
+  const priorSelection = cats.some(c => c.id === filterSelect.value)
+    ? filterSelect.value : '';
 
-    ${
-      products
-        .filter(p => p.category_id === c.id)
-        .map((p, i, arr) => `
-          <div class="item-row">
-            <div class="row">
-              ${
-                p.image_url
-                  ? `<img src="${escapeHTML(p.image_url)}" alt="">`
-                  : '🍗'
-              }
+  // El filtro se mantiene actualizado si se crean, renombran o borran categorías.
+  filterSelect.innerHTML = '<option value="">Todas las categorías</option>' +
+    cats.map(c => '<option value="' + escapeHTML(c.id) + '">' +
+      escapeHTML(c.name) + (c.visible === false ? ' (oculta)' : '') +
+      '</option>').join('');
+  filterSelect.value = priorSelection;
 
-              <div>
-                <strong>${escapeHTML(p.name)}</strong>
-                <br>
-                ${money(p.price)}
-                ${p.available ? '' : '· Oculto'}
-                ${p.featured ? ' · ⭐ Destacado' : ''}
+  const shown = products.filter(p =>
+    (!priorSelection || p.category_id === priorSelection) &&
+    (!needle || normalizeProductSearch(p.name + ' ' + (p.description || '')).includes(needle))
+  );
+  const count = $('#host-product-count');
+  count.textContent = 'Mostrando ' + shown.length + ' de ' + products.length +
+    ' productos' + (needle
+      ? ' · Para cambiar el orden, primero borrá la búsqueda.'
+      : ' · Abrí una categoría para ver sus productos.');
+
+  const visibleCategories = cats.filter(c => !priorSelection || c.id === priorSelection);
+  const itemsHTML = visibleCategories.map(c => {
+    const categoryProducts = products.filter(p => p.category_id === c.id);
+    const visibleProducts = categoryProducts.filter(p => !needle ||
+      normalizeProductSearch(p.name + ' ' + (p.description || '')).includes(needle));
+    if (needle && !visibleProducts.length) return '';
+    const expanded = Boolean(needle || priorSelection) || expandedProductCategories.has(c.id);
+
+    return `
+      <details class="host-product-category" data-product-category="${escapeHTML(c.id)}" ${expanded ? 'open' : ''}>
+        <summary>
+          <span class="host-product-category-name">
+            <span class="host-product-chevron" aria-hidden="true">▸</span>
+            <strong>${escapeHTML(c.name)}</strong>
+            ${c.visible === false ? '<small class="host-product-hidden">Oculta en el menú</small>' : ''}
+          </span>
+          <span class="host-product-category-count">
+            ${needle ? visibleProducts.length + ' de ' : ''}${categoryProducts.length}
+            ${categoryProducts.length === 1 ? 'producto' : 'productos'}
+          </span>
+        </summary>
+        <div class="host-product-category-items">
+          ${visibleProducts.map(p => {
+            const i = categoryProducts.findIndex(x => x.id === p.id);
+            return `
+              <div class="item-row">
+                <div class="row">
+                  ${p.image_url
+                    ? `<img src="${escapeHTML(p.image_url)}" alt="">`
+                    : '🍗'}
+                  <div>
+                    <strong>${escapeHTML(p.name)}</strong><br>
+                    ${money(p.price)}
+                    ${p.available ? '' : '· Oculto'}
+                    ${p.featured ? ' · ⭐ Destacado' : ''}
+                  </div>
+                </div>
+                <div class="actions">
+                  <button class="secondary" data-p-up="${escapeHTML(p.id)}"
+                    ${needle || i === 0 ? 'disabled' : ''} title="${needle ? 'Borrá la búsqueda para reordenar' : 'Subir producto'}">↑</button>
+                  <button class="secondary" data-p-down="${escapeHTML(p.id)}"
+                    ${needle || i === categoryProducts.length - 1 ? 'disabled' : ''} title="${needle ? 'Borrá la búsqueda para reordenar' : 'Bajar producto'}">↓</button>
+                  <button class="secondary" data-p-edit="${escapeHTML(p.id)}">Editar</button>
+                  <button class="danger" data-p-del="${escapeHTML(p.id)}">Eliminar</button>
+                </div>
               </div>
-            </div>
+            `;
+          }).join('') || '<p class="muted">Esta categoría todavía no tiene productos.</p>'}
+        </div>
+      </details>
+    `;
+  }).join('');
 
-            <div class="actions">
-              <button class="secondary"
-                data-p-up="${p.id}"
-                ${i === 0 ? 'disabled' : ''}>↑</button>
+  $('#product-list').innerHTML = itemsHTML ||
+    '<p class="host-product-empty">No encontramos productos con esos filtros. Probá con otro nombre o categoría.</p>';
 
-              <button class="secondary"
-                data-p-down="${p.id}"
-                ${i === arr.length - 1 ? 'disabled' : ''}>↓</button>
+  // Recordar las categorías abiertas cuando se actualizan los datos.
+  document.querySelectorAll('#product-list [data-product-category]').forEach(details => {
+    details.addEventListener('toggle', () => {
+      if (searchInput.value.trim() || filterSelect.value) return;
+      if (details.open) expandedProductCategories.add(details.dataset.productCategory);
+      else expandedProductCategories.delete(details.dataset.productCategory);
+    });
+  });
 
-              <button class="secondary"
-                data-p-edit="${p.id}">Editar</button>
-
-              <button class="danger"
-                data-p-del="${p.id}">Eliminar</button>
-            </div>
-          </div>
-        `).join('') ||
-      '<p class="muted">Sin productos</p>'
-    }
-  `).join('');
-
-  document.querySelectorAll(
-    '[data-p-up],[data-p-down]'
-  ).forEach(b => {
+  document.querySelectorAll('#product-list [data-p-up],#product-list [data-p-down]').forEach(b => {
     b.onclick = () => {
+      if (needle) return;
       const id = b.dataset.pUp || b.dataset.pDown;
       const p = products.find(x => x.id === id);
-
+      if (!p) return;
       reorder(
         products.filter(x => x.category_id === p.category_id),
         id,
@@ -425,35 +488,25 @@ function renderProducts() {
     };
   });
 
-  document.querySelectorAll('[data-p-edit]').forEach(b => {
+  document.querySelectorAll('#product-list [data-p-edit]').forEach(b => {
     b.onclick = () => {
       const p = products.find(x => x.id === b.dataset.pEdit);
+      if (!p) return;
       const f = $('#product-form');
-
       editingProductId = p.id;
-
-      for (const k of [
-        'id',
-        'name',
-        'price',
-        'description',
-        'category_id'
-      ]) {
+      for (const k of ['id','name','price','description','category_id']) {
         f.elements[k].value = p[k] ?? '';
       }
-
       f.elements.available.checked = p.available;
       f.elements.featured.checked = Boolean(p.featured);
-
       renderProductGroups(p.id);
-
-      f.scrollIntoView({ behavior: 'smooth' });
+      $('#host-product-editor-title').textContent = 'Editar producto: ' + p.name;
+      f.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
   });
 
-  document.querySelectorAll('[data-p-del]').forEach(b => {
-    b.onclick = () =>
-      remove('products', b.dataset.pDel).catch(alertError);
+  document.querySelectorAll('#product-list [data-p-del]').forEach(b => {
+    b.onclick = () => remove('products', b.dataset.pDel).catch(alertError);
   });
 }
 
@@ -466,6 +519,7 @@ function clearProductForm() {
   form.elements.id.value = '';
 
   editingProductId = null;
+  $('#host-product-editor-title').textContent = 'Agregar o editar producto';
 
   renderProductGroups(null);
 }
